@@ -2,6 +2,8 @@
 
 Search Naver Images by keyword, save thumbnail images into folders, and keep source/original URL metadata in both CSV and JSON.
 
+The collector requests Naver Image Search with latest-date sorting (`sort=date`) by default. Naver controls the final ordering, so this is best understood as "ask Naver for latest results first" rather than a guaranteed EXIF/date sort of every image file.
+
 ## Install
 
 ```powershell
@@ -23,7 +25,7 @@ The GUI supports:
 - Single keyword search
 - CSV/XLSX batch search
 - Output folder selection
-- Image limit selection, default `20`
+- Image limit selection, default `50`
 - Optional visible browser mode for troubleshooting
 - Progress logs
 
@@ -32,25 +34,31 @@ The GUI supports:
 Single keyword:
 
 ```powershell
-python .\naver_image_collector.py --keyword "수면안대" --limit 20
+python .\naver_image_collector.py --keyword "sleep mask"
 ```
 
 CSV batch:
 
 ```powershell
-python .\naver_image_collector.py --batch-file .\sample_keywords.csv --limit 20
+python .\naver_image_collector.py --batch-file .\sample_keywords.csv
+```
+
+Custom limit:
+
+```powershell
+python .\naver_image_collector.py --keyword "sleep mask" --limit 50
 ```
 
 Custom output folder:
 
 ```powershell
-python .\naver_image_collector.py --keyword "핸드크림" --output-dir .\downloaded_images
+python .\naver_image_collector.py --keyword "hand cream" --output-dir .\downloaded_images
 ```
 
 Show browser:
 
 ```powershell
-python .\naver_image_collector.py --keyword "수면안대" --show-browser
+python .\naver_image_collector.py --keyword "sleep mask" --show-browser
 ```
 
 ## CSV Format
@@ -59,8 +67,8 @@ CSV and XLSX batch files need a `keyword` header:
 
 ```csv
 keyword
-수면안대
-핸드크림
+sleep mask
+hand cream
 ```
 
 Blank rows are skipped. Duplicate keywords are processed once.
@@ -71,13 +79,13 @@ Each keyword writes to a safe folder under the output root:
 
 ```text
 downloaded_images/<keyword>/
-  image_01.jpg
-  image_02.jpg
+  image_01.png
+  image_02.png
   metadata.csv
   metadata.json
 ```
 
-The app saves Naver thumbnail images locally. Metadata includes:
+The app saves Naver thumbnail images locally as PNG files. Metadata includes:
 
 - `keyword`
 - `index`

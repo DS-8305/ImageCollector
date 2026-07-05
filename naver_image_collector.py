@@ -43,7 +43,7 @@ USER_AGENT = (
     "AppleWebKit/537.36 (KHTML, like Gecko) "
     "Chrome/136.0.0.0 Safari/537.36"
 )
-DEFAULT_LIMIT = 20
+DEFAULT_LIMIT = 50
 DEFAULT_OUTPUT_DIR = "downloaded_images"
 
 
@@ -226,7 +226,7 @@ class NaverImageCollector:
 
         output_folder = ensure_keyword_folder(self.output_root, keyword)
         clear_generated_images(output_folder)
-        self._log(f"검색 시작: {keyword}")
+        self._log(f"Search started: {keyword}")
         self.driver.get(self._search_url(keyword))
         time.sleep(1.5)
 
@@ -245,19 +245,19 @@ class NaverImageCollector:
             if candidate.thumbnail_url in seen_urls:
                 continue
             seen_urls.add(candidate.thumbnail_url)
-            file_name = f"image_{saved_index:02d}.jpg"
+            file_name = f"image_{saved_index:02d}.png"
             file_path = output_folder / file_name
             try:
                 self._download_thumbnail(candidate.thumbnail_url, file_path)
                 status = "saved"
                 error = ""
                 saved_paths.append(file_path)
-                self._log(f"저장 완료: {file_name}")
+                self._log(f"Saved: {file_name}")
                 saved_index += 1
             except Exception as exc:
                 status = "failed"
                 error = str(exc)
-                self._log(f"저장 실패: {candidate.thumbnail_url} / {exc}")
+                self._log(f"Save failed: {candidate.thumbnail_url} / {exc}")
 
             records.append(
                 ImageRecord(
@@ -274,13 +274,13 @@ class NaverImageCollector:
             )
 
         if len(saved_paths) < limit:
-            self._log(f"주의: 요청 {limit}장 중 {len(saved_paths)}장만 저장했습니다.")
+            self._log(f"Warning: requested {limit} images, saved {len(saved_paths)}.")
         write_metadata(output_folder, records)
-        self._log(f"검색 완료: {keyword} / {len(saved_paths)}장 저장")
+        self._log(f"Search complete: {keyword} / {len(saved_paths)} images")
         return saved_paths
 
     def _search_url(self, keyword: str) -> str:
-        return f"https://search.naver.com/search.naver?where=image&sm=tab_jum&query={quote_plus(keyword)}"
+        return f"https://search.naver.com/search.naver?where=image&sm=tab_opt&sort=date&query={quote_plus(keyword)}"
 
     def _collect_candidates(self, limit: int) -> list[ImageCandidate]:
         candidates: list[ImageCandidate] = []
@@ -352,7 +352,7 @@ class NaverImageCollector:
         content = response.content
         if Image is not None:
             with Image.open(BytesIO(content)) as image:
-                image.convert("RGB").save(file_path, "JPEG", quality=92, optimize=True)
+                image.convert("RGBA").save(file_path, "PNG", optimize=True)
             return
         file_path.write_bytes(content)
 
@@ -392,14 +392,14 @@ def run_batch_collection(
     collect = collector_func or _collect_single_keyword_for_batch
     keyword_list = [keyword.strip() for keyword in keywords if keyword.strip()]
     for index, keyword in enumerate(keyword_list, start=1):
-        _log(logger, f"[{index}/{len(keyword_list)}] 시작: {keyword}")
+        _log(logger, f"[{index}/{len(keyword_list)}] Start: {keyword}")
         try:
             saved_paths = collect(keyword, limit, output_path, headless)
             results.append(BatchResult(keyword=keyword, saved_count=len(saved_paths), status="success", error=""))
-            _log(logger, f"[{index}/{len(keyword_list)}] 완료: {keyword} / {len(saved_paths)}장")
+            _log(logger, f"[{index}/{len(keyword_list)}] Done: {keyword} / {len(saved_paths)} images")
         except Exception as exc:
             results.append(BatchResult(keyword=keyword, saved_count=0, status="failed", error=str(exc)))
-            _log(logger, f"[{index}/{len(keyword_list)}] 실패: {keyword} / {exc}")
+            _log(logger, f"[{index}/{len(keyword_list)}] Failed: {keyword} / {exc}")
     return results
 
 
