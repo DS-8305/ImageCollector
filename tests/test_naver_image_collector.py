@@ -2,7 +2,10 @@ import csv
 import json
 import unittest
 import uuid
+from io import BytesIO
 from pathlib import Path
+
+from PIL import Image
 
 from naver_image_collector import (
     BatchResult,
@@ -117,8 +120,9 @@ class BatchRunnerTests(unittest.TestCase):
     def test_run_batch_collection_continues_after_failure(self):
         calls = []
 
-        def fake_collect(keyword: str, limit: int, output_root: Path, headless: bool):
+        def fake_collect(keyword: str, limit: int, output_root: Path, headless: bool, min_thumbnail_size: int):
             calls.append(keyword)
+            self.assertEqual(min_thumbnail_size, 150)
             if keyword == "bad":
                 raise RuntimeError("boom")
             return [Path("image_01.png")]
@@ -160,6 +164,70 @@ class SearchUrlTests(unittest.TestCase):
         self.assertIn("where=image", url)
         self.assertIn("sort=date", url)
         self.assertIn("query=keyword", url)
+
+
+class DownloadFilterTests(unittest.TestCase):
+    def _tmp_dir(self) -> Path:
+        path = Path(__file__).parent / f"_tmp_{uuid.uuid4().hex}"
+        path.mkdir()
+        self.addCleanup(lambda: HelperTests._remove_tree(self, path))
+        return path
+
+    def _png_bytes(self, size: tuple[int, int]) -> bytes:
+        buffer = BytesIO()
+        Image.new("RGB", size, color="red").save(buffer, "PNG")
+        return buffer.getvalue()
+
+    def test_download_thumbnail_rejects_images_below_minimum_size(self):
+        class Response:
+            content = self._png_bytes((120, 180))
+
+            def raise_for_status(self):
+                return None
+
+        class Session:
+            def get(self, _url, timeout):
+                return Response()
+
+        root = self._tmp_dir()
+        collector = NaverImageCollector.__new__(NaverImageCollector)
+        collector.session = Session()
+        collector.min_thumbnail_size = 150
+
+        with self.assertRaisesRegex(ValueError, "smaller than minimum"):
+            collector._download_thumbnail("https://example.com/small.png", root / "image_01.png")
+
+        self.assertFalse((root / "image_01.png").exists())
+
+    def test_download_thumbnail_saves_images_at_minimum_size(self):
+        class Response:
+            content = self._png_bytes((150, 150))
+
+            def raise_for_status(self):
+                return None
+
+        class Session:
+            def get(self, _url, timeout):
+                return Response()
+
+        root = self._tmp_dir()
+        collector = NaverImageCollector.__new__(NaverImageCollector)
+        collector.session = Session()
+        collector.min_thumbnail_size = 150
+
+        collector._download_thumbnail("https://example.com/ok.png", root / "image_01.png")
+
+        with Image.open(root / "image_01.png") as image:
+            self.assertEqual(image.format, "PNG")
+            self.assertEqual(image.size, (150, 150))
+
+
+class ThumbnailSizeCliTests(unittest.TestCase):
+    def test_parser_defaults_to_mobile_thumbnail_minimum(self):
+        parser = build_parser()
+        args = parser.parse_args(["--keyword", KOREAN_KEYWORD])
+
+        self.assertEqual(args.min_thumbnail_size, 150)
 
 
 if __name__ == "__main__":

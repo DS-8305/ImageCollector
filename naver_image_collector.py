@@ -45,6 +45,7 @@ USER_AGENT = (
 )
 DEFAULT_LIMIT = 50
 DEFAULT_OUTPUT_DIR = "downloaded_images"
+DEFAULT_MIN_THUMBNAIL_SIZE = 150
 
 
 @dataclass(slots=True)
@@ -176,12 +177,14 @@ class NaverImageCollector:
         output_root: str | Path = DEFAULT_OUTPUT_DIR,
         headless: bool = True,
         timeout_seconds: int = 20,
+        min_thumbnail_size: int = DEFAULT_MIN_THUMBNAIL_SIZE,
         logger: Callable[[str], None] | None = None,
         driver=None,
     ) -> None:
         self.output_root = Path(output_root)
         self.headless = headless
         self.timeout_seconds = timeout_seconds
+        self.min_thumbnail_size = min_thumbnail_size
         self.logger = logger
         self.session = requests.Session()
         self.session.headers.update({"User-Agent": USER_AGENT, "Referer": "https://search.naver.com/"})
@@ -352,6 +355,11 @@ class NaverImageCollector:
         content = response.content
         if Image is not None:
             with Image.open(BytesIO(content)) as image:
+                if image.width < self.min_thumbnail_size or image.height < self.min_thumbnail_size:
+                    raise ValueError(
+                        f"Image {image.width}x{image.height} is smaller than minimum "
+                        f"{self.min_thumbnail_size}x{self.min_thumbnail_size}."
+                    )
                 image.convert("RGBA").save(file_path, "PNG", optimize=True)
             return
         file_path.write_bytes(content)
@@ -369,9 +377,15 @@ def collect_single_keyword(
     limit: int = DEFAULT_LIMIT,
     output_root: str | Path = DEFAULT_OUTPUT_DIR,
     headless: bool = True,
+    min_thumbnail_size: int = DEFAULT_MIN_THUMBNAIL_SIZE,
     logger: Callable[[str], None] | None = None,
 ) -> list[Path]:
-    collector = NaverImageCollector(output_root=output_root, headless=headless, logger=logger)
+    collector = NaverImageCollector(
+        output_root=output_root,
+        headless=headless,
+        min_thumbnail_size=min_thumbnail_size,
+        logger=logger,
+    )
     try:
         return collector.collect_keyword(keyword, limit=limit)
     finally:
@@ -384,8 +398,9 @@ def run_batch_collection(
     limit: int = DEFAULT_LIMIT,
     output_root: str | Path = DEFAULT_OUTPUT_DIR,
     headless: bool = True,
+    min_thumbnail_size: int = DEFAULT_MIN_THUMBNAIL_SIZE,
     logger: Callable[[str], None] | None = None,
-    collector_func: Callable[[str, int, Path, bool], list[Path]] | None = None,
+    collector_func: Callable[[str, int, Path, bool, int], list[Path]] | None = None,
 ) -> list[BatchResult]:
     results: list[BatchResult] = []
     output_path = Path(output_root)
@@ -394,7 +409,7 @@ def run_batch_collection(
     for index, keyword in enumerate(keyword_list, start=1):
         _log(logger, f"[{index}/{len(keyword_list)}] Start: {keyword}")
         try:
-            saved_paths = collect(keyword, limit, output_path, headless)
+            saved_paths = collect(keyword, limit, output_path, headless, min_thumbnail_size)
             results.append(BatchResult(keyword=keyword, saved_count=len(saved_paths), status="success", error=""))
             _log(logger, f"[{index}/{len(keyword_list)}] Done: {keyword} / {len(saved_paths)} images")
         except Exception as exc:
@@ -403,8 +418,20 @@ def run_batch_collection(
     return results
 
 
-def _collect_single_keyword_for_batch(keyword: str, limit: int, output_root: Path, headless: bool) -> list[Path]:
-    return collect_single_keyword(keyword, limit=limit, output_root=output_root, headless=headless)
+def _collect_single_keyword_for_batch(
+    keyword: str,
+    limit: int,
+    output_root: Path,
+    headless: bool,
+    min_thumbnail_size: int,
+) -> list[Path]:
+    return collect_single_keyword(
+        keyword,
+        limit=limit,
+        output_root=output_root,
+        headless=headless,
+        min_thumbnail_size=min_thumbnail_size,
+    )
 
 
 def _log(logger: Callable[[str], None] | None, message: str) -> None:
@@ -426,6 +453,7 @@ class NaverImageCollectorGUI:
         self.root.geometry("900x700")
         self.keyword_var = tk.StringVar(value="")
         self.limit_var = tk.StringVar(value=str(DEFAULT_LIMIT))
+        self.min_thumbnail_size_var = tk.StringVar(value=str(DEFAULT_MIN_THUMBNAIL_SIZE))
         self.batch_file_var = tk.StringVar(value="")
         self.output_dir_var = tk.StringVar(value=DEFAULT_OUTPUT_DIR)
         self.show_browser_var = tk.BooleanVar(value=False)
@@ -454,8 +482,12 @@ class NaverImageCollectorGUI:
         options_frame.columnconfigure(1, weight=1)
         ttk.Label(options_frame, text="Limit").grid(row=0, column=0, sticky=tk.W, padx=(0, 8), pady=4)
         ttk.Entry(options_frame, textvariable=self.limit_var, width=8).grid(row=0, column=1, sticky=tk.W, pady=4)
+        ttk.Label(options_frame, text="Min size").grid(row=0, column=2, sticky=tk.W, padx=(12, 8), pady=4)
+        ttk.Entry(options_frame, textvariable=self.min_thumbnail_size_var, width=8).grid(
+            row=0, column=3, sticky=tk.W, pady=4
+        )
         ttk.Checkbutton(options_frame, text="Show browser", variable=self.show_browser_var).grid(
-            row=0, column=2, sticky=tk.W, padx=(12, 0), pady=4
+            row=0, column=4, sticky=tk.W, padx=(12, 0), pady=4
         )
 
         output_frame = ttk.LabelFrame(frame, text="Output folder", padding=12)
@@ -505,6 +537,15 @@ class NaverImageCollectorGUI:
             raise ValueError("Limit must be at least 1.")
         return limit
 
+    def _parse_min_thumbnail_size(self) -> int:
+        try:
+            min_size = int(self.min_thumbnail_size_var.get().strip())
+        except ValueError as exc:
+            raise ValueError("Min size must be a number.") from exc
+        if min_size < 1:
+            raise ValueError("Min size must be at least 1.")
+        return min_size
+
     def _start_single_run(self) -> None:
         from tkinter import messagebox
 
@@ -514,10 +555,11 @@ class NaverImageCollectorGUI:
             return
         try:
             limit = self._parse_limit()
+            min_thumbnail_size = self._parse_min_thumbnail_size()
         except ValueError as exc:
             messagebox.showerror("Input error", str(exc))
             return
-        self._run_in_thread(self._run_single_task, keyword, limit)
+        self._run_in_thread(self._run_single_task, keyword, limit, min_thumbnail_size)
 
     def _start_batch_run(self) -> None:
         from tkinter import messagebox
@@ -528,10 +570,11 @@ class NaverImageCollectorGUI:
             return
         try:
             limit = self._parse_limit()
+            min_thumbnail_size = self._parse_min_thumbnail_size()
         except ValueError as exc:
             messagebox.showerror("Input error", str(exc))
             return
-        self._run_in_thread(self._run_batch_task, batch_file, limit)
+        self._run_in_thread(self._run_batch_task, batch_file, limit, min_thumbnail_size)
 
     def _run_in_thread(self, target, *args) -> None:
         self._set_running(True)
@@ -544,20 +587,21 @@ class NaverImageCollectorGUI:
         finally:
             self.root.after(0, self._set_running, False)
 
-    def _run_single_task(self, keyword: str, limit: int) -> None:
+    def _run_single_task(self, keyword: str, limit: int, min_thumbnail_size: int) -> None:
         try:
             saved_paths = collect_single_keyword(
                 keyword,
                 limit=limit,
                 output_root=self.output_dir_var.get().strip() or DEFAULT_OUTPUT_DIR,
                 headless=not self.show_browser_var.get(),
+                min_thumbnail_size=min_thumbnail_size,
                 logger=self._append_log,
             )
             self._append_log(f"Done: {keyword} / {len(saved_paths)} images")
         except Exception as exc:
             self._append_log(f"Failed: {keyword} / {exc}")
 
-    def _run_batch_task(self, batch_file: str, limit: int) -> None:
+    def _run_batch_task(self, batch_file: str, limit: int, min_thumbnail_size: int) -> None:
         try:
             keywords = load_keywords(batch_file)
             results = run_batch_collection(
@@ -565,6 +609,7 @@ class NaverImageCollectorGUI:
                 limit=limit,
                 output_root=self.output_dir_var.get().strip() or DEFAULT_OUTPUT_DIR,
                 headless=not self.show_browser_var.get(),
+                min_thumbnail_size=min_thumbnail_size,
                 logger=self._append_log,
             )
             succeeded = sum(1 for result in results if result.status == "success")
@@ -599,6 +644,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--keyword", help="Keyword to search.")
     parser.add_argument("--batch-file", help="CSV or XLSX file with a keyword column.")
     parser.add_argument("--limit", type=int, default=DEFAULT_LIMIT, help="Images to save per keyword.")
+    parser.add_argument(
+        "--min-thumbnail-size",
+        type=int,
+        default=DEFAULT_MIN_THUMBNAIL_SIZE,
+        help="Minimum width and height in pixels for saved images.",
+    )
     parser.add_argument("--output-dir", default=DEFAULT_OUTPUT_DIR, help="Output directory.")
     parser.add_argument("--show-browser", action="store_true", help="Show the Chrome browser window.")
     parser.add_argument("--gui", action="store_true", help="Open the desktop GUI.")
@@ -615,6 +666,8 @@ def main() -> None:
 
     if args.limit < 1:
         parser.error("--limit must be at least 1.")
+    if args.min_thumbnail_size < 1:
+        parser.error("--min-thumbnail-size must be at least 1.")
 
     if args.batch_file:
         keywords = load_keywords(args.batch_file)
@@ -623,6 +676,7 @@ def main() -> None:
             limit=args.limit,
             output_root=args.output_dir,
             headless=not args.show_browser,
+            min_thumbnail_size=args.min_thumbnail_size,
         )
         succeeded = sum(1 for result in results if result.status == "success")
         failed = sum(1 for result in results if result.status == "failed")
@@ -634,6 +688,7 @@ def main() -> None:
         limit=args.limit,
         output_root=args.output_dir,
         headless=not args.show_browser,
+        min_thumbnail_size=args.min_thumbnail_size,
     )
     print(f"Saved {len(saved_paths)} images.")
 

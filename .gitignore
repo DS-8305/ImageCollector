@@ -3,4 +3,5 @@ __pycache__/
 .pytest_cache/
 _smoke_output/
 _smoke_output_png/
+_smoke_output_min_size/
 downloaded_images/

@@ -26,6 +26,7 @@ The GUI supports:
 - CSV/XLSX batch search
 - Output folder selection
 - Image limit selection, default `50`
+- Minimum thumbnail size selection, default `150px`
 - Optional visible browser mode for troubleshooting
 - Progress logs
 
@@ -47,6 +48,12 @@ Custom limit:
 
 ```powershell
 python .\naver_image_collector.py --keyword "sleep mask" --limit 50
+```
+
+Custom minimum thumbnail size:
+
+```powershell
+python .\naver_image_collector.py --keyword "sleep mask" --min-thumbnail-size 150
 ```
 
 Custom output folder:
@@ -85,7 +92,7 @@ downloaded_images/<keyword>/
   metadata.json
 ```
 
-The app saves Naver thumbnail images locally as PNG files. Metadata includes:
+The app saves Naver thumbnail images locally as PNG files. Images smaller than the configured minimum width or height are skipped. Metadata includes:
 
 - `keyword`
 - `index`
