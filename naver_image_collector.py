@@ -139,10 +139,10 @@ def _dedupe_keywords(values: list[str]) -> list[str]:
 def _load_keywords_from_csv(path: Path) -> list[str]:
     with path.open("r", encoding="utf-8-sig", newline="") as file:
         reader = csv.DictReader(file)
-        headers = {header.strip().lower(): header for header in (reader.fieldnames or []) if header}
-        if "keyword" not in headers:
-            raise ValueError("CSV header must include keyword.")
-        keyword_header = headers["keyword"]
+        fieldnames = reader.fieldnames or []
+        keyword_header = fieldnames[0] if fieldnames else ""
+        if not keyword_header or keyword_header.strip().lower() != "keyword":
+            raise ValueError("The first CSV header must be keyword.")
         return _dedupe_keywords([(row.get(keyword_header) or "") for row in reader])
 
 
@@ -514,7 +514,7 @@ class NaverImageCollectorGUI:
         self._append_log("Ready. Enter a keyword or choose a CSV/XLSX file.")
 
     def _choose_batch_file(self) -> None:
-        from tkinter import filedialog, messagebox
+        from tkinter import filedialog
 
         file_path = filedialog.askopenfilename(
             title="Choose CSV or XLSX",
@@ -524,7 +524,7 @@ class NaverImageCollectorGUI:
             try:
                 self._validate_batch_file(file_path)
             except (OSError, ValueError, RuntimeError) as exc:
-                messagebox.showerror("CSV error", str(exc))
+                self._report_batch_validation_error(exc)
 
     def _validate_batch_file(self, file_path: str) -> list[str]:
         keywords = load_keywords(file_path)
@@ -533,6 +533,12 @@ class NaverImageCollectorGUI:
         self.validated_batch_file = file_path
         self._append_log(f"CSV loaded: {len(keywords)} keywords / first: {keywords[0]}")
         return keywords
+
+    def _report_batch_validation_error(self, error: Exception) -> None:
+        from tkinter import messagebox
+
+        self._append_log(f"Batch file validation failed: {error}")
+        messagebox.showerror("Batch file error", str(error))
 
     def _choose_output_dir(self) -> None:
         from tkinter import filedialog
@@ -584,11 +590,15 @@ class NaverImageCollectorGUI:
         try:
             limit = self._parse_limit()
             min_thumbnail_size = self._parse_min_thumbnail_size()
-            if batch_file != self.validated_batch_file:
-                self._validate_batch_file(batch_file)
-        except (OSError, ValueError, RuntimeError) as exc:
+        except ValueError as exc:
             messagebox.showerror("Input error", str(exc))
             return
+        if batch_file != self.validated_batch_file:
+            try:
+                self._validate_batch_file(batch_file)
+            except (OSError, ValueError, RuntimeError) as exc:
+                self._report_batch_validation_error(exc)
+                return
         self._run_in_thread(self._run_batch_task, list(self.batch_keywords), limit, min_thumbnail_size)
 
     def _run_in_thread(self, target, *args) -> None:

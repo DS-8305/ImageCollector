@@ -4,6 +4,7 @@ import unittest
 import uuid
 from io import BytesIO
 from pathlib import Path
+from unittest.mock import patch
 
 from PIL import Image
 
@@ -127,6 +128,33 @@ class BatchInputTests(unittest.TestCase):
 
         self.assertEqual(keywords, [KOREAN_KEYWORD, KOREAN_OTHER])
 
+    def test_load_keywords_from_csv_requires_keyword_in_first_column(self):
+        root = self._tmp_dir()
+        csv_path = root / "keywords.csv"
+        csv_path.write_text(
+            f"name,keyword\nexample,{KOREAN_KEYWORD}\n",
+            encoding="utf-8-sig",
+        )
+
+        with self.assertRaisesRegex(ValueError, "first CSV header must be keyword"):
+            load_keywords(csv_path)
+
+    def test_load_keywords_from_csv_rejects_missing_keyword_header(self):
+        root = self._tmp_dir()
+        csv_path = root / "keywords.csv"
+        csv_path.write_text(f"name\n{KOREAN_KEYWORD}\n", encoding="utf-8-sig")
+
+        with self.assertRaisesRegex(ValueError, "first CSV header must be keyword"):
+            load_keywords(csv_path)
+
+    def test_load_keywords_from_csv_rejects_file_without_valid_terms(self):
+        root = self._tmp_dir()
+        csv_path = root / "keywords.csv"
+        csv_path.write_text("keyword\n\n", encoding="utf-8-sig")
+
+        with self.assertRaisesRegex(ValueError, "No non-empty keyword rows"):
+            load_keywords(csv_path)
+
     def test_clear_generated_images_removes_old_image_files_only(self):
         root = self._tmp_dir()
         (root / "image_01.jpg").write_bytes(b"old")
@@ -216,6 +244,51 @@ class GuiBatchUploadTests(unittest.TestCase):
         self.assertEqual(len(calls), 1)
         self.assertEqual(calls[0][1][0], [KOREAN_KEYWORD, KOREAN_OTHER])
         self.assertEqual(calls[0][1][1:], (50, 150))
+
+    def test_choose_batch_file_logs_validation_failure_and_does_not_start_search(self):
+        root = self._tmp_dir()
+        csv_path = root / "invalid.csv"
+        csv_path.write_text(f"name\n{KOREAN_KEYWORD}\n", encoding="utf-8-sig")
+        gui = NaverImageCollectorGUI.__new__(NaverImageCollectorGUI)
+        gui.batch_file_var = FakeVar("")
+        gui.batch_keywords = []
+        gui.validated_batch_file = ""
+        messages = []
+        gui._append_log = messages.append
+        run_calls = []
+        gui._run_in_thread = lambda target, *args: run_calls.append((target, args))
+
+        with (
+            patch("tkinter.filedialog.askopenfilename", return_value=str(csv_path)),
+            patch("tkinter.messagebox.showerror") as showerror,
+        ):
+            gui._choose_batch_file()
+
+        self.assertEqual(run_calls, [])
+        self.assertIn("Batch file validation failed", messages[-1])
+        showerror.assert_called_once()
+
+    def test_start_batch_run_logs_failure_when_edited_path_is_invalid(self):
+        root = self._tmp_dir()
+        csv_path = root / "invalid.csv"
+        csv_path.write_text(f"name\n{KOREAN_KEYWORD}\n", encoding="utf-8-sig")
+        gui = NaverImageCollectorGUI.__new__(NaverImageCollectorGUI)
+        gui.batch_file_var = FakeVar(str(csv_path))
+        gui.batch_keywords = [KOREAN_OTHER]
+        gui.validated_batch_file = "old.csv"
+        gui.limit_var = FakeVar("50")
+        gui.min_thumbnail_size_var = FakeVar("150")
+        messages = []
+        gui._append_log = messages.append
+        calls = []
+        gui._run_in_thread = lambda target, *args: calls.append((target, args))
+
+        with patch("tkinter.messagebox.showerror") as showerror:
+            gui._start_batch_run()
+
+        self.assertEqual(calls, [])
+        self.assertIn("Batch file validation failed", messages[-1])
+        showerror.assert_called_once()
 
 
 class CliTests(unittest.TestCase):
