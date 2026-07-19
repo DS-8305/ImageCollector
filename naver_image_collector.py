@@ -137,13 +137,19 @@ def _dedupe_keywords(values: list[str]) -> list[str]:
 
 
 def _load_keywords_from_csv(path: Path) -> list[str]:
-    with path.open("r", encoding="utf-8-sig", newline="") as file:
-        reader = csv.DictReader(file)
-        fieldnames = reader.fieldnames or []
-        keyword_header = fieldnames[0] if fieldnames else ""
-        if not keyword_header or keyword_header.strip().lower() != "keyword":
-            raise ValueError("The first CSV header must be keyword.")
-        return _dedupe_keywords([(row.get(keyword_header) or "") for row in reader])
+    decode_error: UnicodeDecodeError | None = None
+    for encoding in ("utf-8-sig", "cp949"):
+        try:
+            with path.open("r", encoding=encoding, newline="") as file:
+                reader = csv.DictReader(file)
+                fieldnames = reader.fieldnames or []
+                keyword_header = fieldnames[0] if fieldnames else ""
+                if not keyword_header or keyword_header.strip().lower() != "keyword":
+                    raise ValueError("The first CSV header must be keyword.")
+                return _dedupe_keywords([(row.get(keyword_header) or "") for row in reader])
+        except UnicodeDecodeError as exc:
+            decode_error = exc
+    raise ValueError("CSV encoding must be UTF-8 or CP949.") from decode_error
 
 
 def _load_keywords_from_xlsx(path: Path) -> list[str]:

@@ -128,6 +128,18 @@ class BatchInputTests(unittest.TestCase):
 
         self.assertEqual(keywords, [KOREAN_KEYWORD, KOREAN_OTHER])
 
+    def test_load_keywords_from_csv_accepts_cp949_korean_text(self):
+        root = self._tmp_dir()
+        csv_path = root / "keywords.csv"
+        csv_path.write_text(
+            f"keyword\n{KOREAN_KEYWORD}\n{KOREAN_OTHER}\n",
+            encoding="cp949",
+        )
+
+        keywords = load_keywords(csv_path)
+
+        self.assertEqual(keywords, [KOREAN_KEYWORD, KOREAN_OTHER])
+
     def test_load_keywords_from_csv_requires_keyword_in_first_column(self):
         root = self._tmp_dir()
         csv_path = root / "keywords.csv"

@@ -79,6 +79,7 @@ hand cream
 ```
 
 Blank rows are skipped. Duplicate keywords are processed once.
+CSV files saved as UTF-8 or Windows Korean CP949 are supported.
 
 In the GUI, select `Upload CSV` and choose the file. The log confirms the
 number of valid keywords and previews the first keyword. Then select
