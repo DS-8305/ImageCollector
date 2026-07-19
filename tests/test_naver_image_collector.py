@@ -11,6 +11,7 @@ from naver_image_collector import (
     BatchResult,
     ImageRecord,
     NaverImageCollector,
+    NaverImageCollectorGUI,
     build_parser,
     clear_generated_images,
     ensure_keyword_folder,
@@ -25,6 +26,17 @@ KOREAN_KEYWORD = "\uc218\uba74\uc548\ub300"
 KOREAN_SAFE_INPUT = "\uc218\uba74\uc548\ub300 \uc554\ub9c9/\uc219\uba74"
 KOREAN_SAFE_OUTPUT = "\uc218\uba74\uc548\ub300_\uc554\ub9c9_\uc219\uba74"
 KOREAN_OTHER = "\ud578\ub4dc\ud06c\ub9bc"
+
+
+class FakeVar:
+    def __init__(self, value):
+        self.value = value
+
+    def get(self):
+        return self.value
+
+    def set(self, value):
+        self.value = value
 
 
 class HelperTests(unittest.TestCase):
@@ -103,6 +115,18 @@ class BatchInputTests(unittest.TestCase):
 
         self.assertEqual(keywords, [KOREAN_KEYWORD, KOREAN_OTHER])
 
+    def test_load_keywords_from_csv_accepts_header_variants_and_preserves_order(self):
+        root = self._tmp_dir()
+        csv_path = root / "keywords.csv"
+        csv_path.write_text(
+            f" Keyword \n  {KOREAN_KEYWORD}  \n\n{KOREAN_OTHER}\n{KOREAN_KEYWORD}\n",
+            encoding="utf-8-sig",
+        )
+
+        keywords = load_keywords(csv_path)
+
+        self.assertEqual(keywords, [KOREAN_KEYWORD, KOREAN_OTHER])
+
     def test_clear_generated_images_removes_old_image_files_only(self):
         root = self._tmp_dir()
         (root / "image_01.jpg").write_bytes(b"old")
@@ -145,6 +169,53 @@ class BatchRunnerTests(unittest.TestCase):
                 BatchResult(keyword="next", saved_count=1, status="success", error=""),
             ],
         )
+
+
+class GuiBatchUploadTests(unittest.TestCase):
+    def _tmp_dir(self) -> Path:
+        path = Path(__file__).parent / f"_tmp_{uuid.uuid4().hex}"
+        path.mkdir()
+        self.addCleanup(lambda: HelperTests._remove_tree(self, path))
+        return path
+
+    def test_validate_batch_file_caches_keywords_and_logs_preview(self):
+        root = self._tmp_dir()
+        csv_path = root / "keywords.csv"
+        csv_path.write_text(
+            f"keyword\n{KOREAN_KEYWORD}\n{KOREAN_OTHER}\n",
+            encoding="utf-8-sig",
+        )
+        gui = NaverImageCollectorGUI.__new__(NaverImageCollectorGUI)
+        gui.batch_file_var = FakeVar("")
+        gui.batch_keywords = []
+        gui.validated_batch_file = ""
+        messages = []
+        gui._append_log = messages.append
+
+        keywords = gui._validate_batch_file(str(csv_path))
+
+        self.assertEqual(keywords, [KOREAN_KEYWORD, KOREAN_OTHER])
+        self.assertEqual(gui.batch_file_var.get(), str(csv_path))
+        self.assertEqual(gui.batch_keywords, keywords)
+        self.assertEqual(gui.validated_batch_file, str(csv_path))
+        self.assertIn("2", messages[-1])
+        self.assertIn(KOREAN_KEYWORD, messages[-1])
+
+    def test_start_batch_run_passes_cached_keywords_to_background_task(self):
+        gui = NaverImageCollectorGUI.__new__(NaverImageCollectorGUI)
+        gui.batch_file_var = FakeVar("keywords.csv")
+        gui.batch_keywords = [KOREAN_KEYWORD, KOREAN_OTHER]
+        gui.validated_batch_file = "keywords.csv"
+        gui.limit_var = FakeVar("50")
+        gui.min_thumbnail_size_var = FakeVar("150")
+        calls = []
+        gui._run_in_thread = lambda target, *args: calls.append((target, args))
+
+        gui._start_batch_run()
+
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0][1][0], [KOREAN_KEYWORD, KOREAN_OTHER])
+        self.assertEqual(calls[0][1][1:], (50, 150))
 
 
 class CliTests(unittest.TestCase):

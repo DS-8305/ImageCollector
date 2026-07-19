@@ -23,7 +23,7 @@ python .\naver_image_collector.py
 The GUI supports:
 
 - Single keyword search
-- CSV/XLSX batch search
+- CSV/XLSX batch search with upload-time validation and keyword preview
 - Output folder selection
 - Image limit selection, default `50`
 - Minimum thumbnail size selection, default `150px`
@@ -79,6 +79,11 @@ hand cream
 ```
 
 Blank rows are skipped. Duplicate keywords are processed once.
+
+In the GUI, select `Upload CSV` and choose the file. The log confirms the
+number of valid keywords and previews the first keyword. Then select
+`Search images` to process every valid unique keyword from row 2 onward in
+the same order as the file. Choosing a file alone does not start a search.
 
 ## Output
 

@@ -455,6 +455,8 @@ class NaverImageCollectorGUI:
         self.limit_var = tk.StringVar(value=str(DEFAULT_LIMIT))
         self.min_thumbnail_size_var = tk.StringVar(value=str(DEFAULT_MIN_THUMBNAIL_SIZE))
         self.batch_file_var = tk.StringVar(value="")
+        self.batch_keywords: list[str] = []
+        self.validated_batch_file = ""
         self.output_dir_var = tk.StringVar(value=DEFAULT_OUTPUT_DIR)
         self.show_browser_var = tk.BooleanVar(value=False)
         self.run_buttons = []
@@ -500,8 +502,8 @@ class NaverImageCollectorGUI:
         batch_frame.grid(row=3, column=0, sticky="ew", pady=(12, 0))
         batch_frame.columnconfigure(0, weight=1)
         ttk.Entry(batch_frame, textvariable=self.batch_file_var).grid(row=0, column=0, sticky="ew")
-        ttk.Button(batch_frame, text="Choose file", command=self._choose_batch_file).grid(row=0, column=1, padx=(8, 0))
-        batch_button = ttk.Button(batch_frame, text="Run batch", command=self._start_batch_run)
+        ttk.Button(batch_frame, text="Upload CSV", command=self._choose_batch_file).grid(row=0, column=1, padx=(8, 0))
+        batch_button = ttk.Button(batch_frame, text="Search images", command=self._start_batch_run)
         batch_button.grid(row=0, column=2, padx=(8, 0))
         self.run_buttons.append(batch_button)
 
@@ -512,14 +514,25 @@ class NaverImageCollectorGUI:
         self._append_log("Ready. Enter a keyword or choose a CSV/XLSX file.")
 
     def _choose_batch_file(self) -> None:
-        from tkinter import filedialog
+        from tkinter import filedialog, messagebox
 
         file_path = filedialog.askopenfilename(
             title="Choose CSV or XLSX",
             filetypes=[("Batch files", "*.csv;*.xlsx"), ("All files", "*.*")],
         )
         if file_path:
-            self.batch_file_var.set(file_path)
+            try:
+                self._validate_batch_file(file_path)
+            except (OSError, ValueError, RuntimeError) as exc:
+                messagebox.showerror("CSV error", str(exc))
+
+    def _validate_batch_file(self, file_path: str) -> list[str]:
+        keywords = load_keywords(file_path)
+        self.batch_file_var.set(file_path)
+        self.batch_keywords = keywords
+        self.validated_batch_file = file_path
+        self._append_log(f"CSV loaded: {len(keywords)} keywords / first: {keywords[0]}")
+        return keywords
 
     def _choose_output_dir(self) -> None:
         from tkinter import filedialog
@@ -571,10 +584,12 @@ class NaverImageCollectorGUI:
         try:
             limit = self._parse_limit()
             min_thumbnail_size = self._parse_min_thumbnail_size()
-        except ValueError as exc:
+            if batch_file != self.validated_batch_file:
+                self._validate_batch_file(batch_file)
+        except (OSError, ValueError, RuntimeError) as exc:
             messagebox.showerror("Input error", str(exc))
             return
-        self._run_in_thread(self._run_batch_task, batch_file, limit, min_thumbnail_size)
+        self._run_in_thread(self._run_batch_task, list(self.batch_keywords), limit, min_thumbnail_size)
 
     def _run_in_thread(self, target, *args) -> None:
         self._set_running(True)
@@ -601,9 +616,8 @@ class NaverImageCollectorGUI:
         except Exception as exc:
             self._append_log(f"Failed: {keyword} / {exc}")
 
-    def _run_batch_task(self, batch_file: str, limit: int, min_thumbnail_size: int) -> None:
+    def _run_batch_task(self, keywords: list[str], limit: int, min_thumbnail_size: int) -> None:
         try:
-            keywords = load_keywords(batch_file)
             results = run_batch_collection(
                 keywords,
                 limit=limit,
