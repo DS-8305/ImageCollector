@@ -69,6 +69,16 @@ class ImageCandidate:
     source: str
 
 
+def normalize_relevance_text(value: str) -> str:
+    return "".join(character for character in value.casefold() if character.isalnum())
+
+
+def is_candidate_relevant(keyword: str, candidate: ImageCandidate) -> bool:
+    normalized_keyword = normalize_relevance_text(keyword)
+    evidence = normalize_relevance_text(f"{candidate.title} {candidate.source}")
+    return bool(normalized_keyword and evidence and normalized_keyword in evidence)
+
+
 @dataclass(frozen=True, slots=True)
 class BatchResult:
     keyword: str
@@ -239,9 +249,9 @@ class NaverImageCollector:
         self.driver.get(self._search_url(keyword))
         time.sleep(1.5)
 
-        candidates = self._collect_candidates(limit)
+        candidates = self._collect_candidates(keyword, limit)
         if not candidates:
-            raise RuntimeError("No image candidates were found. Naver page selectors may need updating.")
+            raise RuntimeError("No image candidates matched the strict relevance filter.")
 
         records: list[ImageRecord] = []
         saved_paths: list[Path] = []
@@ -283,59 +293,95 @@ class NaverImageCollector:
             )
 
         if len(saved_paths) < limit:
-            self._log(f"Warning: requested {limit} images, saved {len(saved_paths)}.")
+            self._log(
+                f"Warning: requested {limit} images, saved {len(saved_paths)}; "
+                "strict relevance filtering may return fewer images."
+            )
         write_metadata(output_folder, records)
         self._log(f"Search complete: {keyword} / {len(saved_paths)} images")
         return saved_paths
 
     def _search_url(self, keyword: str) -> str:
-        return f"https://search.naver.com/search.naver?where=image&sm=tab_opt&sort=date&query={quote_plus(keyword)}"
+        return f"https://search.naver.com/search.naver?where=image&sm=tab_opt&query={quote_plus(keyword)}"
 
-    def _collect_candidates(self, limit: int) -> list[ImageCandidate]:
+    def _collect_candidates(self, keyword: str, limit: int) -> list[ImageCandidate]:
         candidates: list[ImageCandidate] = []
         seen: set[str] = set()
+        rejected_count = 0
         stale_rounds = 0
-        target = max(limit * 2, limit + 10)
+        previous_seen_count = -1
 
         for _ in range(14):
             for candidate in self._extract_candidates_from_page():
                 if candidate.thumbnail_url in seen:
                     continue
                 seen.add(candidate.thumbnail_url)
-                candidates.append(candidate)
-                if len(candidates) >= target:
+                if is_candidate_relevant(keyword, candidate):
+                    candidates.append(candidate)
+                else:
+                    rejected_count += 1
+                if len(candidates) >= limit:
+                    self._log(f"Strict relevance filter excluded {rejected_count} candidates.")
                     return candidates
 
-            before = len(candidates)
+            current_seen_count = len(seen)
+            stale_rounds = stale_rounds + 1 if current_seen_count == previous_seen_count else 0
+            previous_seen_count = current_seen_count
+            if stale_rounds >= 3:
+                break
             self.driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
             time.sleep(1.0)
-            after = len(candidates)
-            stale_rounds = stale_rounds + 1 if after == before else 0
-            if stale_rounds >= 3 and len(candidates) >= limit:
-                break
+
+        if not seen:
+            raise RuntimeError("No image result cards were found. Naver page selectors may need updating.")
+        self._log(f"Strict relevance filter excluded {rejected_count} candidates.")
         return candidates
 
     def _extract_candidates_from_page(self) -> list[ImageCandidate]:
         raw_items = self.driver.execute_script(
             """
             const results = [];
-            const images = Array.from(document.querySelectorAll('img'));
-            for (const img of images) {
-              const src = img.currentSrc || img.src || img.getAttribute('data-src') || '';
-              if (!src || src.startsWith('data:')) continue;
-              const box = img.getBoundingClientRect();
-              if (box.width < 80 || box.height < 80) continue;
-              const anchor = img.closest('a');
-              const container = img.closest('div, li, section') || img.parentElement;
-              const text = container ? container.innerText : '';
-              results.push({
-                thumbnailUrl: src,
-                sourceUrl: anchor ? anchor.href : '',
-                title: img.alt || img.title || '',
-                source: text.split('\\n').slice(0, 2).join(' / '),
-                width: Math.round(box.width),
-                height: Math.round(box.height)
-              });
+            const grids = Array.from(document.querySelectorAll('[data-image-viewer-list]'));
+            for (const grid of grids) {
+              const metadataById = new Map();
+              try {
+                const metadata = JSON.parse(grid.getAttribute('data-image-viewer-list') || '[]');
+                for (const item of metadata) {
+                  if (item && item.imgId) metadataById.set(item.imgId, item);
+                }
+              } catch (_error) {
+                // The result-card structure is still valid; visible text remains usable evidence.
+              }
+
+              const images = Array.from(grid.querySelectorAll('img[data-image-viewer-img-id]'));
+              for (const img of images) {
+                const src = img.currentSrc || img.src || img.getAttribute('data-src') || '';
+                if (!src || src.startsWith('data:')) continue;
+                let thumbnailUrl;
+                try {
+                  thumbnailUrl = new URL(src, window.location.href);
+                } catch (_error) {
+                  continue;
+                }
+                if (thumbnailUrl.hostname !== 'search.pstatic.net') continue;
+                const box = img.getBoundingClientRect();
+                if (box.width < 80 || box.height < 80) continue;
+
+                const imageId = img.getAttribute('data-image-viewer-img-id') || '';
+                const metadata = metadataById.get(imageId) || {};
+                const card = img.closest('.tile_item[data-type="image"]');
+                const cardText = card ? card.innerText : '';
+                results.push({
+                  thumbnailUrl: thumbnailUrl.href,
+                  sourceUrl: metadata.link || '',
+                  title: metadata.title || img.alt || img.title || '',
+                  source: [metadata.source || '', metadata.writerTitle || '', cardText]
+                    .filter(Boolean)
+                    .join(' / '),
+                  width: Math.round(box.width),
+                  height: Math.round(box.height)
+                });
+              }
             }
             return results;
             """

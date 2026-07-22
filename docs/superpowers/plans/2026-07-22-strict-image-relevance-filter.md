@@ -4,7 +4,7 @@
 
 **Goal:** Save only Naver image-result candidates whose title or result-card text contains the complete normalized search keyword.
 
-**Architecture:** Add pure relevance normalization and candidate predicate functions, then apply them while scrolling so unrelated results never reach the download loop. Restrict browser extraction to linked Naver search-thumbnail images and remove forced date sorting; preserve all existing input, output, and batch interfaces.
+**Architecture:** Add pure relevance normalization and candidate predicate functions, then apply them while scrolling so unrelated results never reach the download loop. Restrict browser extraction to Naver image-viewer result grids and their thumbnail IDs, parse the associated result metadata, and remove forced date sorting; preserve all existing input, output, and batch interfaces.
 
 **Tech Stack:** Python 3, Selenium JavaScript execution, `unittest`; no new dependencies.
 
@@ -75,7 +75,7 @@ Run: `python -m unittest tests.test_naver_image_collector.RelevanceFilterTests -
 
 Expected: all relevance tests pass.
 
-### Task 2: Restrict extraction to linked search thumbnails
+### Task 2: Restrict extraction to Naver image-viewer results
 
 **Files:**
 - Modify: `tests/test_naver_image_collector.py`
@@ -90,7 +90,7 @@ Expected: all relevance tests pass.
 Use a fake driver that records the JavaScript and returns one result dictionary:
 
 ```python
-def test_page_extraction_scopes_to_linked_naver_search_thumbnails(self):
+def test_page_extraction_scopes_to_naver_image_viewer_results(self):
     driver = RecordingDriver([{
         "thumbnailUrl": "https://search.pstatic.net/common/thumb.jpg",
         "sourceUrl": "https://example.com/article",
@@ -103,7 +103,8 @@ def test_page_extraction_scopes_to_linked_naver_search_thumbnails(self):
     candidates = collector._extract_candidates_from_page()
 
     self.assertEqual(len(candidates), 1)
-    self.assertIn("querySelectorAll('a img')", driver.script)
+    self.assertIn("querySelectorAll('[data-image-viewer-list]')", driver.script)
+    self.assertIn("img[data-image-viewer-img-id]", driver.script)
     self.assertIn("search.pstatic.net", driver.script)
     self.assertNotIn("querySelectorAll('img')", driver.script)
 ```
@@ -116,7 +117,7 @@ Expected: FAIL because the script still contains page-wide `querySelectorAll('im
 
 - [ ] **Step 3: Implement strict structural extraction**
 
-Change the browser script to begin with `document.querySelectorAll('a img')`. Require an enclosing anchor and a parsed thumbnail hostname equal to `search.pstatic.net`; skip invalid URLs. Build evidence from `img.alt`, `img.title`, anchor accessible labels, and the closest text-bearing result container within a bounded parent walk. Return the same candidate dictionary keys used by Python. Do not add a page-wide fallback.
+Query `[data-image-viewer-list]` result grids and their `img[data-image-viewer-img-id]` thumbnails. Parse the grid's JSON metadata and join each thumbnail ID to its title, source, writer domain, and original link. Require a parsed thumbnail hostname equal to `search.pstatic.net`; skip invalid URLs. Return the same candidate dictionary keys used by Python. Do not add a page-wide fallback.
 
 - [ ] **Step 4: Run extraction tests and verify GREEN**
 

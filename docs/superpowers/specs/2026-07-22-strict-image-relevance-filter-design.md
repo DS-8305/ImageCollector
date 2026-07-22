@@ -14,7 +14,7 @@ This means page chrome and unrelated cards can enter the candidate list, while n
 
 Use a two-layer strict filter:
 
-1. Extract only images that belong to Naver image-result cards, identified through result-area/card structure and link/image attributes rather than every image on the page.
+1. Extract only images that belong to Naver image-viewer result cards, identified through the result grid's `data-image-viewer-list` metadata and each thumbnail's `data-image-viewer-img-id` rather than every image on the page.
 2. Require normalized keyword evidence in the candidate's title, surrounding result-card text, or meaningful link text before accepting it.
 
 No AI model, embedding service, image classifier, or new dependency is introduced.
@@ -32,7 +32,8 @@ No AI model, embedding service, image classifier, or new dependency is introduce
 ## Search and Candidate Collection
 
 - Use Naver's default image-search ordering rather than forcing `sort=date`; this aligns the request with relevance-focused collection.
-- The browser extraction script must query image-result containers/cards, not the entire document image set.
+- The browser extraction script must query image-viewer result grids and thumbnail IDs, not the entire document image set.
+- Parse each result grid's metadata to obtain the matching title, source, and original link for each thumbnail ID.
 - Return title, source text, thumbnail URL, and source link for each result card.
 - If no result-card candidates can be extracted, raise a clear selector/result-structure error. Do not fall back to all page images.
 - Continue scrolling while new candidates appear, up to the existing bounded number of rounds.

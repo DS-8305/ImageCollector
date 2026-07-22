@@ -10,6 +10,7 @@ from PIL import Image
 
 from naver_image_collector import (
     BatchResult,
+    ImageCandidate,
     ImageRecord,
     NaverImageCollector,
     NaverImageCollectorGUI,
@@ -17,6 +18,8 @@ from naver_image_collector import (
     clear_generated_images,
     ensure_keyword_folder,
     load_keywords,
+    is_candidate_relevant,
+    normalize_relevance_text,
     run_batch_collection,
     safe_folder_name,
     write_metadata,
@@ -38,6 +41,78 @@ class FakeVar:
 
     def set(self, value):
         self.value = value
+
+
+class RelevanceFilterTests(unittest.TestCase):
+    def test_normalize_relevance_text_ignores_spacing_punctuation_and_case(self):
+        self.assertEqual(normalize_relevance_text(" Sleep-mask! "), "sleepmask")
+        self.assertEqual(normalize_relevance_text("이준석 국회의원"), "이준석국회의원")
+
+    def test_candidate_relevance_accepts_complete_normalized_keyword_in_title(self):
+        candidate = ImageCandidate(
+            thumbnail_url="https://search.pstatic.net/thumb.jpg",
+            source_url="https://example.com",
+            title="이준석 국회의원 인터뷰",
+            source="뉴스",
+        )
+
+        self.assertTrue(is_candidate_relevant("이준석국회의원", candidate))
+
+    def test_candidate_relevance_accepts_complete_normalized_keyword_in_source(self):
+        candidate = ImageCandidate(
+            thumbnail_url="https://search.pstatic.net/thumb.jpg",
+            source_url="https://example.com",
+            title="오늘의 인터뷰",
+            source="이준석-국회의원 관련 뉴스",
+        )
+
+        self.assertTrue(is_candidate_relevant("이준석 국회의원", candidate))
+
+    def test_candidate_relevance_rejects_partial_or_unrelated_evidence(self):
+        candidate = ImageCandidate(
+            thumbnail_url="https://search.pstatic.net/thumb.jpg",
+            source_url="https://example.com",
+            title="이준석 인터뷰",
+            source="국회 뉴스",
+        )
+
+        self.assertFalse(is_candidate_relevant("이준석국회의원", candidate))
+        self.assertFalse(is_candidate_relevant("박홍근 장관", candidate))
+
+    def test_candidate_relevance_rejects_empty_evidence(self):
+        candidate = ImageCandidate("thumb", "source", "", "")
+
+        self.assertFalse(is_candidate_relevant("이준석국회의원", candidate))
+
+
+class ResultExtractionTests(unittest.TestCase):
+    def test_page_extraction_scopes_to_naver_image_viewer_results(self):
+        class RecordingDriver:
+            def __init__(self):
+                self.script = ""
+
+            def execute_script(self, script):
+                self.script = script
+                return [
+                    {
+                        "thumbnailUrl": "https://search.pstatic.net/common/thumb.jpg",
+                        "sourceUrl": "https://example.com/article",
+                        "title": "이준석 국회의원",
+                        "source": "뉴스 결과",
+                    }
+                ]
+
+        driver = RecordingDriver()
+        collector = NaverImageCollector.__new__(NaverImageCollector)
+        collector.driver = driver
+
+        candidates = collector._extract_candidates_from_page()
+
+        self.assertEqual(len(candidates), 1)
+        self.assertIn("querySelectorAll('[data-image-viewer-list]')", driver.script)
+        self.assertIn("img[data-image-viewer-img-id]", driver.script)
+        self.assertIn("search.pstatic.net", driver.script)
+        self.assertNotIn("querySelectorAll('img')", driver.script)
 
 
 class HelperTests(unittest.TestCase):
@@ -312,14 +387,61 @@ class CliTests(unittest.TestCase):
 
 
 class SearchUrlTests(unittest.TestCase):
-    def test_search_url_requests_latest_sort(self):
+    def test_search_url_uses_default_relevance_order(self):
         collector = NaverImageCollector.__new__(NaverImageCollector)
 
         url = collector._search_url("keyword")
 
         self.assertIn("where=image", url)
-        self.assertIn("sort=date", url)
+        self.assertNotIn("sort=date", url)
         self.assertIn("query=keyword", url)
+
+
+class StrictCandidateCollectionTests(unittest.TestCase):
+    def _collector_with_batches(self, batches):
+        class ScrollDriver:
+            def __init__(self):
+                self.scroll_count = 0
+
+            def execute_script(self, _script):
+                self.scroll_count += 1
+
+        queued_batches = iter(batches)
+        messages = []
+        collector = NaverImageCollector.__new__(NaverImageCollector)
+        collector.driver = ScrollDriver()
+        collector.logger = messages.append
+        collector._extract_candidates_from_page = lambda: next(queued_batches, [])
+        return collector, messages
+
+    def test_collect_candidates_keeps_only_relevant_items_in_order(self):
+        collector, messages = self._collector_with_batches(
+            [
+                [
+                    ImageCandidate("thumb-1", "source-1", "이준석 국회의원 인터뷰", "뉴스"),
+                    ImageCandidate("thumb-2", "source-2", "박홍근 장관 일정", "뉴스"),
+                    ImageCandidate("thumb-3", "source-3", "오늘의 이준석국회의원 일정", "정치"),
+                ]
+            ]
+        )
+
+        with patch("naver_image_collector.time.sleep"):
+            candidates = collector._collect_candidates("이준석국회의원", 3)
+
+        self.assertEqual(
+            [candidate.title for candidate in candidates],
+            ["이준석 국회의원 인터뷰", "오늘의 이준석국회의원 일정"],
+        )
+        self.assertTrue(any("excluded 1" in message for message in messages))
+
+    def test_collect_candidates_raises_when_no_result_cards_exist(self):
+        collector, _messages = self._collector_with_batches([[], [], []])
+
+        with (
+            patch("naver_image_collector.time.sleep"),
+            self.assertRaisesRegex(RuntimeError, "result cards"),
+        ):
+            collector._collect_candidates("이준석국회의원", 3)
 
 
 class DownloadFilterTests(unittest.TestCase):
