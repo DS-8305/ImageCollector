@@ -250,8 +250,6 @@ class NaverImageCollector:
         time.sleep(1.5)
 
         candidates = self._collect_candidates(keyword, limit)
-        if not candidates:
-            raise RuntimeError("No image candidates matched the strict relevance filter.")
 
         records: list[ImageRecord] = []
         saved_paths: list[Path] = []
@@ -347,7 +345,7 @@ class NaverImageCollector:
               try {
                 const metadata = JSON.parse(grid.getAttribute('data-image-viewer-list') || '[]');
                 for (const item of metadata) {
-                  if (item && item.imgId) metadataById.set(item.imgId, item);
+                  if (item && item.imgId) metadataById.set(String(item.imgId), item);
                 }
               } catch (_error) {
                 // The result-card structure is still valid; visible text remains usable evidence.

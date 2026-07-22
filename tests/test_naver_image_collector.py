@@ -112,6 +112,7 @@ class ResultExtractionTests(unittest.TestCase):
         self.assertIn("querySelectorAll('[data-image-viewer-list]')", driver.script)
         self.assertIn("img[data-image-viewer-img-id]", driver.script)
         self.assertIn("search.pstatic.net", driver.script)
+        self.assertIn("metadataById.set(String(item.imgId), item)", driver.script)
         self.assertNotIn("querySelectorAll('img')", driver.script)
 
 
@@ -398,6 +399,22 @@ class SearchUrlTests(unittest.TestCase):
 
 
 class StrictCandidateCollectionTests(unittest.TestCase):
+    def _tmp_dir(self) -> Path:
+        path = Path(__file__).parent / f"_tmp_{uuid.uuid4().hex}"
+        path.mkdir()
+        self.addCleanup(lambda: self._remove_tree(path))
+        return path
+
+    def _remove_tree(self, path: Path) -> None:
+        if not path.exists():
+            return
+        for child in path.iterdir():
+            if child.is_dir():
+                self._remove_tree(child)
+            else:
+                child.unlink()
+        path.rmdir()
+
     def _collector_with_batches(self, batches):
         class ScrollDriver:
             def __init__(self):
@@ -420,8 +437,11 @@ class StrictCandidateCollectionTests(unittest.TestCase):
                 [
                     ImageCandidate("thumb-1", "source-1", "이준석 국회의원 인터뷰", "뉴스"),
                     ImageCandidate("thumb-2", "source-2", "박홍근 장관 일정", "뉴스"),
+                ],
+                [
+                    ImageCandidate("thumb-1", "source-1", "이준석 국회의원 인터뷰", "뉴스"),
                     ImageCandidate("thumb-3", "source-3", "오늘의 이준석국회의원 일정", "정치"),
-                ]
+                ],
             ]
         )
 
@@ -432,6 +452,7 @@ class StrictCandidateCollectionTests(unittest.TestCase):
             [candidate.title for candidate in candidates],
             ["이준석 국회의원 인터뷰", "오늘의 이준석국회의원 일정"],
         )
+        self.assertGreaterEqual(collector.driver.scroll_count, 1)
         self.assertTrue(any("excluded 1" in message for message in messages))
 
     def test_collect_candidates_raises_when_no_result_cards_exist(self):
@@ -442,6 +463,28 @@ class StrictCandidateCollectionTests(unittest.TestCase):
             self.assertRaisesRegex(RuntimeError, "result cards"),
         ):
             collector._collect_candidates("이준석국회의원", 3)
+
+    def test_collect_keyword_treats_zero_relevant_candidates_as_success(self):
+        class Driver:
+            def get(self, _url):
+                return None
+
+        root = self._tmp_dir()
+        messages = []
+        collector = NaverImageCollector.__new__(NaverImageCollector)
+        collector.output_root = root
+        collector.driver = Driver()
+        collector.logger = messages.append
+        collector._collect_candidates = lambda _keyword, _limit: []
+
+        with patch("naver_image_collector.time.sleep"):
+            saved_paths = collector.collect_keyword("이준석국회의원", limit=3)
+
+        output_folder = root / "이준석국회의원"
+        self.assertEqual(saved_paths, [])
+        self.assertTrue((output_folder / "metadata.csv").is_file())
+        self.assertEqual(json.loads((output_folder / "metadata.json").read_text(encoding="utf-8")), [])
+        self.assertTrue(any("strict relevance filtering" in message for message in messages))
 
 
 class DownloadFilterTests(unittest.TestCase):
