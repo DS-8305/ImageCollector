@@ -4,7 +4,41 @@ Search Naver Images by keyword, save thumbnail images into folders, and keep sou
 
 The collector requests Naver Image Search with latest-date sorting (`sort=date`) by default. Naver controls the final ordering, so this is best understood as "ask Naver for latest results first" rather than a guaranteed EXIF/date sort of every image file.
 
-## Install
+## Run on another computer
+
+Prerequisites:
+
+- Git
+- Python 3.10 or newer
+- Google Chrome
+
+Clone the repository and create an isolated Python environment:
+
+```powershell
+git clone https://github.com/DS-8305/ImageCollector.git
+cd .\ImageCollector
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+python -m pip install -r .\requirements.txt
+```
+
+On macOS or Linux, activate the environment with:
+
+```bash
+source .venv/bin/activate
+```
+
+Then launch the desktop UI:
+
+```powershell
+python .\naver_image_collector.py
+```
+
+`webdriver-manager` downloads the matching ChromeDriver automatically the
+first time a search runs, so an internet connection is required.
+
+## Install in an existing checkout
 
 ```powershell
 python -m pip install -r .\requirements.txt
@@ -41,7 +75,7 @@ python .\naver_image_collector.py --keyword "sleep mask"
 CSV batch:
 
 ```powershell
-python .\naver_image_collector.py --batch-file .\sample_keywords.csv
+python .\naver_image_collector.py --batch-file .\sample_keywords_300.csv
 ```
 
 Custom limit:
@@ -80,6 +114,14 @@ hand cream
 
 Blank rows are skipped. Duplicate keywords are processed once.
 CSV files saved as UTF-8 or Windows Korean CP949 are supported.
+
+The repository includes the following keyword batches:
+
+- `sample_keywords_300.csv`
+- `sample_keywords_600.csv`
+- `sample_keywords_900.csv`
+- `sample_keywords_1200.csv`
+- `sample_keywords_end.csv`
 
 In the GUI, select `Upload CSV` and choose the file. The log confirms the
 number of valid keywords and previews the first keyword. Then select
