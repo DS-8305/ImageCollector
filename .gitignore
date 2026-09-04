@@ -1,6 +1,7 @@
 __pycache__/
 *.py[cod]
 .pytest_cache/
+.venv/
 _smoke_output/
 _smoke_output_png/
 _smoke_output_min_size/
