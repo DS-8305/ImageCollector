@@ -2,7 +2,11 @@
 
 Search Naver Images by keyword, save thumbnail images into folders, and keep source/original URL metadata in both CSV and JSON.
 
-The collector requests Naver Image Search with latest-date sorting (`sort=date`) by default. Naver controls the final ordering, so this is best understood as "ask Naver for latest results first" rather than a guaranteed EXIF/date sort of every image file.
+The collector uses Naver's default image-search ordering and applies strict
+relevance filtering. It extracts Naver image-viewer result thumbnails and saves a
+candidate only when its title or result-card text contains the complete
+normalized keyword. The app may therefore save fewer images than requested
+instead of filling a folder with unrelated results.
 
 ## Run on another computer
 
@@ -62,6 +66,7 @@ The GUI supports:
 - Image limit selection, default `50`
 - Minimum thumbnail size selection, default `150px`
 - Optional visible browser mode for troubleshooting
+- Strict keyword relevance filtering without an unrelated-image fallback
 - Progress logs
 
 ## CLI
