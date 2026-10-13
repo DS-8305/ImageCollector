@@ -6,3 +6,11 @@ _smoke_output/
 _smoke_output_png/
 _smoke_output_min_size/
 downloaded_images/
+.test-tmp/
+.wdm/
+.cache/
+.browser-cache/
+.superpowers/
+.live-output/
+docs/briefs/
+tests/_tmp_*/

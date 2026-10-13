@@ -204,9 +204,9 @@ class BatchRunnerTests(unittest.TestCase):
         self.assertEqual(
             results,
             [
-                BatchResult(keyword="good", saved_count=1, status="success", error=""),
+                BatchResult(keyword="good", saved_count=1, status="partial", error=""),
                 BatchResult(keyword="bad", saved_count=0, status="failed", error="boom"),
-                BatchResult(keyword="next", saved_count=1, status="success", error=""),
+                BatchResult(keyword="next", saved_count=1, status="partial", error=""),
             ],
         )
 

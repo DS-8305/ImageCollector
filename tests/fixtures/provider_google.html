@@ -1,0 +1,19 @@
+<!doctype html><html><body>
+<img alt="Google logo" src="https://example.com/logo.png">
+<div id="results">
+  <div class="isv-r" data-ri="0" data-docid="a" data-lpage="https://source.example/first" onclick="selectCard(1)">
+    <img class="Q4LuWd" alt="First apple" src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jKqkAAAAASUVORK5CYII=">
+  </div>
+  <div class="isv-r" data-ri="1" data-docid="b" data-lpage="https://source.example/second" onclick="selectCard(2)">
+    <img class="Q4LuWd" alt="Second apple" src="https://thumb.example/second.jpg">
+  </div>
+</div>
+<div jsname="figiqf" id="detail"><img class="n3VNCb" style="width:500px;height:400px" src="https://images.example/previous.jpg"><a target="_blank" href="https://source.example/previous">Visit</a></div>
+<script>
+window.clicks=0;
+function selectCard(n) { window.clicks++; setTimeout(()=>{
+ const name=n===1?'first':'second';
+ document.querySelector('#detail img').src='https://images.example/'+name+'.jpg';
+ document.querySelector('#detail a').href='https://source.example/'+name;
+},150); }
+</script></body></html>
