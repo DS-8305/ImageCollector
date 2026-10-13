@@ -15,7 +15,8 @@ from PIL import Image, ImageOps, UnidentifiedImageError
 import requests
 from urllib3.exceptions import ReadTimeoutError
 
-from .models import Candidate, Cancelled, DownloadedImage, DuplicateImage, RejectedImage, ResolvedOptions
+from .models import (Candidate, Cancelled, DownloadedImage, DuplicateImage,
+                     DownloadBudgetExceeded, RejectedImage, ResolvedOptions)
 
 
 MAX_DOWNLOAD_BYTES = 20 * 1024 * 1024
@@ -48,7 +49,7 @@ class Downloader:
         if self.stop_event is not None and self.stop_event.is_set():
             raise Cancelled("Image download cancelled")
         if self.deadline is not None and time.monotonic() >= self.deadline:
-            raise RejectedImage("Image download deadline exceeded")
+            raise DownloadBudgetExceeded("Image download deadline exceeded")
 
     def _timeout(self):
         self._check_budget()
@@ -57,7 +58,7 @@ class Downloader:
     def _wait(self, seconds):
         self._check_budget()
         if self.deadline is not None and time.monotonic() + seconds >= self.deadline:
-            raise RejectedImage("Download retry cannot fit within deadline")
+            raise DownloadBudgetExceeded("Download retry cannot fit within deadline")
         end = time.monotonic() + seconds
         while True:
             self._check_budget()
@@ -91,8 +92,8 @@ class Downloader:
             return self._download(candidate, candidate.thumbnail_url, "thumbnail", seen_hashes)
         try:
             return self._download(candidate, candidate.original_url, "original", seen_hashes)
-        except DuplicateImage:
-            raise  # An existing original should not be replaced with a lower-quality copy.
+        except (DuplicateImage, DownloadBudgetExceeded):
+            raise  # Neither duplicates nor exhausted budgets allow a thumbnail fallback.
         except RejectedImage as exc:
             if mode != "original-preferred":
                 raise

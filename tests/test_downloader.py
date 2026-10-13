@@ -34,6 +34,16 @@ class DownloadTests(unittest.TestCase):
         self.assertEqual(self.hits["/long-retry"],1)
         self.assertLess(time.monotonic()-started,1)
 
+    def test_retry_outside_budget_never_triggers_preferred_thumbnail_fallback(self):
+        original = self.route("/budget-original", status=429, headers={"Retry-After": "3600"})
+        thumbnail = self.route("/budget-thumbnail")
+        options = replace(self.options, download_mode="original-preferred")
+        downloader = self.downloader(options=options, deadline=time.monotonic() + 6)
+        with self.assertRaisesRegex(RejectedImage, "deadline"):
+            downloader.download(self.candidate(original, thumbnail))
+        self.assertEqual(self.hits["/budget-original"], 1)
+        self.assertEqual(self.hits["/budget-thumbnail"], 0)
+
 
     def test_slow_drip_body_honors_cancel_before_large_chunk_fills(self):
         stop=threading.Event()

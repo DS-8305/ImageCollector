@@ -9,7 +9,7 @@
 
 | 검사 | 결과 |
 | --- | --- |
-| 전체 unittest discovery | 132개 통과, 실패·오류 없음 (27.893초, 후속 수정·버전 표시 포함) |
+| 전체 unittest discovery | 133개 통과, 실패·오류 없음 (27.327초, 후속 수정·버전 표시·시간 예산 회귀 포함) |
 | Python compileall | image_collector, 기존 진입점, tests, scripts 통과 |
 | 기존 네이버 API/CLI 호환 | 기존 20개 테스트 유지; 부족 수량을 partial로 구분하는 기대값 2개 갱신 |
 | 실제 로컬 HTTP | JPEG/PNG/WebP, 원본/대체, 잘못된 본문, 크기·전송량, 재시도, 느린 전송 중 중단·시간 제한 |
@@ -46,6 +46,11 @@
 
 Windows/OneDrive의 일시적인 파일 교체 거절도 실제 전체 테스트에서 관찰했다.
 원자 JSON 교체에 한정된 재시도와 재현 테스트를 추가해 이전 파일을 보존한다.
+
+후속 CI의 Python 3.10에서 `test_deadline_during_stream_is_honored_without_fallback`이 실패했다.
+서버 대기·재시도가 남은 시간 안에 들어가지 못해 거절됐지만, 실제 제한 시각 전이면 original-preferred가 썸네일 대체 요청을 시작할 수 있었다.
+`test_retry_outside_budget_never_triggers_preferred_thumbnail_fallback`으로 이 경로를 시간 경합 없이 재현했다.
+시간 예산 거절을 별도 예외로 구분해 썸네일 대체를 금지했고, 두 회귀 테스트와 전체 133개 테스트가 통과했다.
 
 ## 검증 범위
 

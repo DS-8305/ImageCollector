@@ -10,13 +10,12 @@ Python 3.10 이상과 Google Chrome이 필요합니다.
 ~~~powershell
 git clone https://github.com/DS-8305/ImageCollector.git
 cd ImageCollector
-git switch codex/google-image-collector
 python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
 .\.venv\Scripts\python.exe .\naver_image_collector.py
 ~~~
 
-위 설치 예제는 [검토용 PR #2](https://github.com/DS-8305/ImageCollector/pull/2)의 구현 브랜치를 사용합니다. PR이 master에 반영되면 브랜치 전환 없이 설치할 수 있습니다.
+위 설치 예제는 저장소 기본 브랜치 master를 사용합니다. 변경 내역과 검증 기록은 [PR #2](https://github.com/DS-8305/ImageCollector/pull/2)에서 확인할 수 있습니다.
 
 프로젝트 폴더에서 다음 실행 스크립트도 사용할 수 있습니다.
 
@@ -190,7 +189,7 @@ partial/empty는 정상 종료하되 수량 부족과 상태를 표시합니다.
 테스트는 생성 이미지·로컬 HTTP 서버·로컬 DOM과 Chrome·숨김 Tk를 사용하며 실검색에 의존하지 않습니다.
 ChromeDriver가 없으면 테스트 브라우저 초기 설치에 인터넷 연결이 필요합니다.
 
-132개 테스트 통과, 네이버·구글 실제 이미지 각 3장 저장, 구글 확인 화면 감지 결과는 [검증 기록](docs/verification.md)에 정리했습니다.
+133개 테스트 통과, 네이버·구글 실제 이미지 각 3장 저장, 구글 확인 화면 감지 결과는 [검증 기록](docs/verification.md)에 정리했습니다.
 
 - image_collector/models.py: 옵션·크기 프리셋·결과 계약
 - image_collector/providers/: 네이버·구글·선택적 외부 API 수집기

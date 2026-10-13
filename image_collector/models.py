@@ -26,6 +26,11 @@ class DuplicateImage(RejectedImage):
     pass
 
 
+class DownloadBudgetExceeded(RejectedImage):
+    """A download operation cannot continue within the keyword time budget."""
+    pass
+
+
 PROFILES = {
     "legacy-thumbnail": (150, 150, 0),
     "blog": (150, 150, 1200),
