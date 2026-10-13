@@ -10,6 +10,7 @@ import time
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
+from . import __version__
 from .gallery import Gallery, items_from_manifest
 from .models import Cancelled, Candidate, CollectionOptions, NeedsAttention
 
@@ -174,7 +175,7 @@ class CollectorGUI:
         self.after_id = None
         self.preview_snapshot = None
         self.last_run_dir = None
-        root.title('이미지 수집기 · 네이버 / 구글')
+        root.title(f'이미지 수집기 {__version__} · 네이버 / 구글')
         root.geometry('1120x860')
         root.minsize(850, 650)
         root.protocol('WM_DELETE_WINDOW', self.close)
