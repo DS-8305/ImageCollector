@@ -12,4 +12,5 @@ Task 4 complete: atomic journal, safe files, OS lock, both engines, stop/resume 
 Task 5 complete: CLI, Korean GUI, candidate preview/selection, saved gallery/export, compatibility adapters.
 Independent review complete: six material findings reproduced and fixed with RED-to-GREEN tests. Detailed report and dispositions in docs/verification.md.
 Final suite: 129/129 PASS; compileall PASS; real Naver 3/3 saved; real Google needs_attention, no false success. External API actual account calls not made.
-Task 6 in progress: packaging documentation, clean diff, final commit and draft PR.
+Task 6 complete: packaging documentation and launcher, clean diff, source commit 4e2e98a and pushed branch codex/google-image-collector.
+Reviewable draft PR: https://github.com/DS-8305/ImageCollector/pull/2. No merge performed. Google live verification limitation is explicit in README, verification report and PR.

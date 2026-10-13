@@ -76,6 +76,6 @@ Files: README.md, requirements.txt, .github/workflows/tests.yml, run_collector.p
 - [x] Run small live Naver/Google keyword and Google batch if external state permits; never imply success from mocks.
 - [x] Independent review of correctness/security/resume/UI, fix meaningful findings with regression tests.
 - [x] Document install/start/config/output and actual verification.
-- [ ] Commit final implementation on codex branch and prepare reviewable GitHub draft PR when available.
+- [x] Commit final implementation on codex branch and prepare reviewable GitHub draft PR when available.
 
-Verification: 129 tests PASS, compileall PASS, launcher reports 2.0.0. Naver live 3/3 saved; Google live verification screen prevented original download and batch verification. Six independent review findings have regression coverage and fixes. Delivery pending branch push and draft PR.
+Verification: 129 tests PASS, compileall PASS, launcher reports 2.0.0. Naver live 3/3 saved; Google live verification screen prevented original download and batch verification. Six independent review findings have regression coverage and fixes. Source commit 4e2e98a pushed; draft PR https://github.com/DS-8305/ImageCollector/pull/2 created and attached to the chat.

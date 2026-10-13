@@ -3,6 +3,7 @@
 검증일: 2026-10-13 (Asia/Seoul)
 기준: codex/google-image-collector, 원격 master 7be44cf에서 시작.
 환경: Windows, Python 3.12.14, 설치된 Chrome, 프로젝트 .venv.
+구현 커밋: 4e2e98a. 전달: [검토용 PR #2](https://github.com/DS-8305/ImageCollector/pull/2).
 
 ## 결과
 

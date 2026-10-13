@@ -16,7 +16,7 @@ python -m venv .venv
 .\.venv\Scripts\python.exe .\naver_image_collector.py
 ~~~
 
-위 설치 예제는 검토용 구현 브랜치를 사용합니다. PR이 master에 반영되면 브랜치 전환 없이 설치할 수 있습니다.
+위 설치 예제는 [검토용 PR #2](https://github.com/DS-8305/ImageCollector/pull/2)의 구현 브랜치를 사용합니다. PR이 master에 반영되면 브랜치 전환 없이 설치할 수 있습니다.
 
 프로젝트 폴더에서 다음 실행 스크립트도 사용할 수 있습니다.
 
