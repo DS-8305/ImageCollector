@@ -70,6 +70,17 @@ def run_collection(keywords, options: CollectionOptions, output_root="downloaded
     def provider_log(message):
         emit("log",message=str(message))
 
+    def record_candidate_error(job, candidate, status, error):
+        store.record_error(job, candidate, status, error)
+        reason = str(error)
+        explanation = reason
+        if not candidate.original_url and resolved[job["engine"]].download_mode == "original-only":
+            explanation = "원본 이미지 주소를 찾지 못했습니다."
+        action = {"duplicate": "중복 제외", "skipped": "건너뜀", "failed": "다운로드 실패"}[status]
+        emit("log", message=f'{job["engine"]} 후보 {candidate.rank} {action}: {explanation}',
+             keyword=job["keyword"], engine=job["engine"], rank=candidate.rank,
+             status=status, reason=reason)
+
     emit("run",path=str(store.run_dir),run_id=store.data["run_id"])
     try:
         for job in store.data["jobs"].values():
@@ -135,15 +146,15 @@ def run_collection(keywords, options: CollectionOptions, output_root="downloaded
                     try:
                         image = download.download(candidate,seen_hashes=seen_hashes)
                     except DuplicateImage as exc:
-                        store.record_error(job,candidate,"duplicate",exc)
+                        record_candidate_error(job,candidate,"duplicate",exc)
                         continue
                     except RejectedImage as exc:
-                        store.record_error(job,candidate,"skipped",exc)
+                        record_candidate_error(job,candidate,"skipped",exc)
                         continue
                     except (Cancelled, NeedsAttention):
                         raise
                     except Exception as exc:
-                        store.record_error(job,candidate,"failed",exc)
+                        record_candidate_error(job,candidate,"failed",exc)
                         continue
                     # Persist intent before the file so an interrupted commit can be recovered.
                     row = store.begin_image(job,candidate,image)

@@ -200,6 +200,70 @@ class DOMProviderTests(unittest.TestCase):
         self.assertEqual([x.source_url for x in result], ["https://source.example/first", "https://source.example/second"])
         self.assertEqual([x.rank for x in result], [1, 2])
 
+    def test_google_modern_detail_keeps_full_image_and_ignores_cached_preview(self):
+        result = list(self.provider("provider_google_modern.html", max_candidates=2).search("apple"))
+        self.assertEqual([candidate.original_url for candidate in result],
+                         ["https://images.example/first.png", "https://images.example/second.png"])
+        self.assertEqual([candidate.source_url for candidate in result],
+                         ["https://source.example/first", "https://source.example/second"])
+
+    def test_google_modern_detail_downloads_real_originals_and_saves_png(self):
+        import json
+        import tempfile
+        from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+        from io import BytesIO
+        from PIL import Image
+        from image_collector.runner import run_collection
+        from image_collector.storage import load_run
+
+        images = {}
+        for name, color in (("first", "red"), ("second", "blue")):
+            buffer = BytesIO()
+            Image.new("RGB", (1200, 800), color).save(buffer, "PNG")
+            images[f"/{name}.png"] = buffer.getvalue()
+
+        class ImageHandler(BaseHTTPRequestHandler):
+            def log_message(self, *_):
+                pass
+            def do_GET(self):
+                body = images.get(self.path)
+                self.send_response(200 if body else 404)
+                self.send_header("Content-Type", "image/png")
+                self.end_headers()
+                if body:
+                    self.wfile.write(body)
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), ImageHandler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            base = f"http://127.0.0.1:{server.server_port}"
+            with tempfile.TemporaryDirectory(dir=Path.cwd()) as root:
+                fixture = Path(root) / "google.html"
+                html = (Path(__file__).parent / "fixtures/provider_google_modern.html").read_text(encoding="utf-8")
+                fixture.write_text(html.replace("https://images.example", base), encoding="utf-8")
+                def supply(engine, options, browser, **kwargs):
+                    provider = self.provider(str(fixture))
+                    provider.options = options
+                    provider.stop_event = kwargs["stop_event"]
+                    provider.logger = kwargs["logger"]
+                    return provider
+                result = run_collection(["a"], CollectionOptions(engine="google", limit=2, max_candidates=2),
+                                        output_root=Path(root) / "output", provider_factory=supply)
+                self.assertEqual((result.status, result.saved_count), ("success", 2))
+                job = next(iter(load_run(result.run_dir)["jobs"].values()))
+                metadata = json.loads((result.run_dir / job["folder"] / "metadata.json").read_text(encoding="utf-8"))
+                self.assertEqual([row["downloaded_url"] for row in metadata], [base+"/first.png", base+"/second.png"])
+                self.assertEqual([row["download_kind"] for row in metadata], ["original", "original"])
+                for row, color in zip(metadata, ((255, 0, 0, 255), (0, 0, 255, 255))):
+                    with Image.open(result.run_dir / job["folder"] / row["file_name"]) as image:
+                        self.assertEqual((image.format, image.size), ("PNG", (1200, 800)))
+                        self.assertEqual(image.getpixel((0, 0)), color)
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=2)
+
     def test_google_stale_detail_is_not_assigned_to_next_card(self):
         provider = self.provider("provider_google_stale.html", max_candidates=2)
         result = list(provider.search("apple"))

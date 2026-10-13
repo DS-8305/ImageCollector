@@ -33,11 +33,19 @@ class GoogleProvider(BrowserProvider):
       return results;
     """
     detail_script = """
-      const out=[];
-      for(const img of document.querySelectorAll('img.sFlh5c.pT0Scc,img.n3VNCb')) {
-        if(!img.getClientRects().length) continue;
-        const src=img.currentSrc||img.src||'';
-        if(!src.startsWith('http')) continue;
+      const out=[], seen=new Set();
+      const selectors=['img[jsname="kn3ccd"]','img.sFlh5c.iPVvYb',
+        'img.sFlh5c.FyHeAf','img.sFlh5c.pT0Scc','img.n3VNCb'];
+      for(const selector of selectors) for(const img of document.querySelectorAll(selector)) {
+        if(seen.has(img)) continue;
+        seen.add(img);
+        if(!img.getClientRects().length || img.getAttribute('aria-hidden')==='true') continue;
+        const src=[img.getAttribute('src'),img.currentSrc,img.getAttribute('data-src')].find(value=>{
+          if(!/^https?:\\/\\//i.test(value||'')) return false;
+          // A Google cached thumbnail is not the publisher's original URL.
+          return !/^(encrypted-tbn\\d*|tbn\\d*)\\.gstatic\\.com$/i.test(new URL(value).hostname);
+        });
+        if(!src) continue;
         const panel=img.closest('[jsname="figiqf"],[jsname="CGzTgf"],[role="dialog"]')||img.parentElement;
         const links=[...panel.querySelectorAll('a[href]')];
         const link=links.find(a=>a.target==='_blank'&&!a.href.includes('google.com/'));

@@ -56,6 +56,19 @@ class RunnerTests(unittest.TestCase):
             self.assertEqual((result.status,result.jobs[0].saved_count),("failed",0))
             self.assertEqual(result.jobs[0].status,"failed")
 
+    def test_missing_original_reason_reaches_gui_log_during_collection(self):
+        events = []
+        candidate = Candidate("https://thumb.example/image.png", engine="google", rank=7)
+        with tempfile.TemporaryDirectory() as root:
+            result = self.run_api()(["a"], CollectionOptions(engine="google", limit=1), root,
+                                    logger=events.append, provider_factory=self.factory([candidate]))
+            self.assertEqual(result.saved_count, 0)
+            reasons = [event for event in events if event["type"] == "log" and event.get("status") == "skipped"]
+            self.assertEqual(len(reasons), 1)
+            self.assertEqual((reasons[0]["engine"], reasons[0]["rank"]), ("google", 7))
+            self.assertIn("URL", reasons[0]["reason"])
+            self.assertIn("원본", reasons[0]["message"])
+
     def test_partial_count_and_both_engines(self):
         with tempfile.TemporaryDirectory() as root:
             result = self.run_api()(["a"],CollectionOptions(engine="both",limit=2),root,

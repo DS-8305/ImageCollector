@@ -14,3 +14,4 @@ Independent review complete: six material findings reproduced and fixed with RED
 Final suite: 129/129 PASS; compileall PASS; real Naver 3/3 saved; real Google needs_attention, no false success. External API actual account calls not made.
 Task 6 complete: packaging documentation and launcher, clean diff, source commit 4e2e98a and pushed branch codex/google-image-collector.
 Reviewable draft PR: https://github.com/DS-8305/ImageCollector/pull/2. No merge performed. Google live verification limitation is explicit in README, verification report and PR.
+Follow-up: user Google runs skipped 30/55 candidates with missing original URLs. Added alternative detail image attributes and live skip/failure logs. Real Chrome/local HTTP integration saves two 1200x800 original PNGs with metadata. Full suite 132 PASS; user live retry remains needed because the diagnostic Google sessions were verification-blocked. See docs/google-download-fix.md.

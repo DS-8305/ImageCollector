@@ -1,0 +1,18 @@
+<!doctype html><html><body>
+<!-- Detail image attributes are based on published Google-search capture metadata;
+     URLs/text are synthetic. See docs/google-download-fix.md for provenance. -->
+<div class="isv-r" data-docid="first" data-lpage="https://source.example/first" onclick="selectCard('first')"><img class="YQ4gaf" src="https://thumb.example/first.png" alt="First result"></div>
+<div class="isv-r" data-docid="second" data-lpage="https://source.example/second" onclick="selectCard('second')"><img class="YQ4gaf" src="https://thumb.example/second.png" alt="Second result"></div>
+<div jsname="CGzTgf" id="detail">
+  <img class="sFlh5c FyHeAf" style="width:300px;height:200px" src="https://encrypted-tbn0.gstatic.com/images?q=tbn:preview" alt="Preview">
+  <a target="_blank" id="source" href="https://source.example/previous"><img id="full" class="sFlh5c FyHeAf iPVvYb" jsname="kn3ccd" aria-hidden="false" style="width:500px;height:333px" src="https://images.example/previous.png"></a>
+  <img class="sFlh5c FyHeAf iPVvYb" jsname="kn3ccd" style="display:none" src="https://images.example/hidden.png">
+</div>
+<script>
+function selectCard(name) {
+  setTimeout(()=>{
+    document.querySelector('#full').src='https://images.example/'+name+'.png';
+    document.querySelector('#source').href='https://source.example/'+name;
+  },150);
+}
+</script></body></html>
