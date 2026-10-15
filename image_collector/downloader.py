@@ -17,6 +17,7 @@ from urllib3.exceptions import ReadTimeoutError
 
 from .models import (Candidate, Cancelled, DownloadedImage, DuplicateImage,
                      DownloadBudgetExceeded, RejectedImage, ResolvedOptions)
+from .budget import ActiveBudget
 
 
 MAX_DOWNLOAD_BYTES = 20 * 1024 * 1024
@@ -35,10 +36,19 @@ class Downloader:
     def __init__(self, options: ResolvedOptions, stop_event=None, session=None, deadline=None):
         self.options = options
         self.stop_event = stop_event
+        self.budget = ActiveBudget(options.keyword_timeout)
         self.deadline = time.monotonic() + options.keyword_timeout if deadline is None else deadline
         self._owns_session = session is None
         self.session = requests.Session() if session is None else session
         self._closed = False
+
+    @property
+    def deadline(self):
+        return self.budget.deadline
+
+    @deadline.setter
+    def deadline(self, value):
+        self.budget.deadline = value
 
     def close(self):
         if self._owns_session and not self._closed:
@@ -267,5 +277,6 @@ class Downloader:
         self._check_budget()
         width, height = normalized.size
         if not self.options.accepts_size(width, height):
-            raise RejectedImage(f"Image dimensions {width}x{height} below required minimum size")
+            raise RejectedImage(f'이미지 크기 {width}×{height}px가 저장 조건을 충족하지 않습니다. '
+                                f'적용 기준: {self.options.size_requirement_text()}')
         return normalized, width, height

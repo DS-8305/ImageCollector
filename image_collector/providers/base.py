@@ -1,8 +1,8 @@
 """Shared bounds and page-state handling for search adapters."""
 import time
 from urllib.parse import urlparse
-from selenium.common.exceptions import TimeoutException, WebDriverException
-from selenium.webdriver.support.ui import WebDriverWait
+from selenium.common.exceptions import NoSuchElementException, WebDriverException
+from image_collector.budget import ActiveBudget
 from image_collector.models import ResolvedOptions, Candidate, Cancelled, CollectionError, NeedsAttention
 
 
@@ -23,7 +23,19 @@ class BrowserProvider:
         self.browser = browser
         self.stop_event = stop_event
         self.logger = logger
-        self.deadline = 0
+        self.budget = ActiveBudget(0)
+        self.verification_timeout = 600
+        self.verification_seconds = 0
+        self.verification_callback = None
+        self.diagnostic_dir = None
+
+    @property
+    def deadline(self):
+        return self.budget.deadline
+
+    @deadline.setter
+    def deadline(self, value):
+        self.budget.deadline = value
 
     def check_cancelled(self):
         if self.stop_event is not None and self.stop_event.is_set():
@@ -53,21 +65,28 @@ class BrowserProvider:
         return "unknown"
 
     def wait(self, condition, timeout=10):
-        budget = min(timeout, self.remaining())
-        if budget <= 0:
-            return None
-
-        def checked(driver):
+        end = time.monotonic() + min(timeout, self.remaining())
+        while self.remaining() > 0:
             self.check_cancelled()
+            paused = self.budget.paused_seconds
             self.await_page_state()
-            if self.remaining() <= 0:
-                return False
-            return condition(driver)
+            end += self.budget.paused_seconds - paused
+            if self.remaining() <= 0 or time.monotonic() >= end:
+                return None
+            try:
+                result = condition(self.browser.driver)
+                if result:
+                    return result
+            except NoSuchElementException:
+                pass
+            self._sleep(min(.1, self.remaining(), max(0, end-time.monotonic())))
+        return None
 
-        try:
-            return WebDriverWait(self.browser.driver, budget, poll_frequency=.1).until(checked)
-        except TimeoutException:
-            return None
+    def _sleep(self, seconds):
+        if self.stop_event is not None:
+            self.stop_event.wait(seconds)
+        else:
+            time.sleep(seconds)
 
     def await_page_state(self):
         """Keep a visible verification page available for manual user action."""
@@ -77,17 +96,32 @@ class BrowserProvider:
             if self.options.headless:
                 raise
             if self.logger:
-                self.logger("사용자 확인 필요: 표시된 브라우저에서 동의 또는 확인 화면을 처리하세요. 처리 후 계속합니다.")
-            while self.remaining() > 0:
-                self.check_cancelled()
+                self.logger("사용자 확인 필요: 같은 Chrome 창에서 캡차 또는 동의를 처리하세요. "
+                            "확인 대기 시간은 수집 제한 시간에서 제외합니다.")
+            if self.verification_callback:
+                self.verification_callback(waiting=True)
+            start = time.monotonic()
+            manual_end = start + max(0, self.verification_timeout-self.verification_seconds)
+            resolved = False
+            with self.budget.pause():
                 try:
-                    return self.page_state()
-                except NeedsAttention:
-                    if self.stop_event is not None:
-                        self.stop_event.wait(min(.2,self.remaining()))
-                    else:
-                        time.sleep(min(.2,self.remaining()))
-            raise NeedsAttention("브라우저 확인 대기 시간이 끝났습니다. 결과를 보존했으며 이어받기로 다시 시도할 수 있습니다.") from attention
+                    while time.monotonic() < manual_end:
+                        self.check_cancelled()
+                        try:
+                            state = self.page_state()
+                            resolved = True
+                            if self.logger:
+                                self.logger("브라우저 확인 완료: 같은 세션에서 수집을 계속합니다.")
+                            return state
+                        except NeedsAttention:
+                            self._sleep(min(.2, max(0, manual_end-time.monotonic())))
+                    self.check_cancelled()
+                    raise NeedsAttention("브라우저 확인 대기 시간이 끝났습니다. 저장 결과를 보존했습니다. "
+                                         "확인 후 이어받기를 누르세요.") from attention
+                finally:
+                    self.verification_seconds += time.monotonic()-start
+                    if self.verification_callback:
+                        self.verification_callback(waiting=False, resolved=resolved)
 
     def read_cards(self):
         return self.browser.driver.execute_script(self.cards_script) or []
@@ -101,6 +135,7 @@ class BrowserProvider:
     def search(self, keyword):
         self.check_cancelled()
         self.deadline = time.monotonic() + self.options.keyword_timeout
+        self.verification_seconds = 0
         driver = self.browser.driver
         driver.set_page_load_timeout(min(30, self.options.keyword_timeout))
         try:

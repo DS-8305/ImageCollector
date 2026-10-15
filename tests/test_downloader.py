@@ -150,6 +150,17 @@ class DownloadTests(unittest.TestCase):
         self.assertEqual(result.fallback_reason, "")
         self.assertEqual(self.headers["/image"]["Referer"], "https://publisher.example/page")
 
+    def test_size_failure_explains_inherited_long_edge_and_zero_disables_it(self):
+        url = self.route('/square', body=image_bytes(size=(1000, 1000)))
+        options = CollectionOptions(engine='google', min_width=100, min_height=100)
+        with self.assertRaises(RejectedImage) as caught:
+            self.downloader(options=options.resolve()).download(self.candidate(url))
+        message = str(caught.exception)
+        for text in ('1000×1000', '가로 100px', '세로 100px', '긴 변 1200px'):
+            self.assertIn(text, message)
+        result = self.downloader(options=replace(options, min_long_edge=0).resolve()).download(self.candidate(url))
+        self.assertEqual((result.width, result.height), (1000, 1000))
+
     def test_thumbnail_mode_skips_original_and_uses_engine_referer(self):
         thumb = self.route("/thumb")
         original = self.route("/original")

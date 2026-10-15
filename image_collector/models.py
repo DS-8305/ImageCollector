@@ -76,6 +76,10 @@ class ResolvedOptions:
     def accepts_size(self, width: int, height: int) -> bool:
         return width >= self.min_width and height >= self.min_height and max(width, height) >= self.min_long_edge
 
+    def size_requirement_text(self) -> str:
+        edge = f'긴 변 {self.min_long_edge}px 이상' if self.min_long_edge else '긴 변 제한 없음'
+        return f'가로 {self.min_width}px 이상 · 세로 {self.min_height}px 이상 · {edge}'
+
 
 @dataclass(frozen=True, slots=True)
 class CollectionOptions:

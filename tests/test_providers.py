@@ -179,7 +179,8 @@ class DOMProviderTests(unittest.TestCase):
             def __getattr__(self, name):
                 return getattr(real, name)
 
-        resolved = CollectionOptions(engine=engine, max_scrolls=1, keyword_timeout=2, **options).resolve()
+        resolved = CollectionOptions(engine=engine, max_scrolls=1, keyword_timeout=options.pop('keyword_timeout', 2),
+                                     headless=options.pop('headless', True), **options).resolve()
         provider = create_provider(engine, resolved, SimpleNamespace(driver=FixtureDriver()))
         self.assertTrue(callable(getattr(provider, "search", None)), "Browser search is not implemented")
         return provider
@@ -330,6 +331,112 @@ class DOMProviderTests(unittest.TestCase):
     def test_captured_google_live_block_is_attention(self):
         with self.assertRaises(NeedsAttention):
             list(self.provider("provider_google_live.html").search("apple"))
+
+    def test_verification_longer_than_keyword_budget_still_downloads(self):
+        import tempfile
+        from dataclasses import replace
+        from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+        from io import BytesIO
+        from PIL import Image
+        from image_collector.runner import run_collection
+        from image_collector.storage import load_run
+        png = BytesIO()
+        Image.new('RGB', (1200, 800), 'green').save(png, 'PNG')
+        class Handler(BaseHTTPRequestHandler):
+            def log_message(self, *_):
+                pass
+            def do_GET(self):
+                self.send_response(200)
+                self.end_headers()
+                self.wfile.write(png.getvalue())
+        server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            with tempfile.TemporaryDirectory() as root:
+                original = f'http://127.0.0.1:{server.server_port}/image.png'
+                fixture = Path(root) / 'verification.html'
+                fixture.write_text('''<form id="captcha-form">Verification</form><script>
+                  setTimeout(()=>{document.querySelector('form').remove();
+                    setTimeout(()=>{document.body.innerHTML=`<div class="isv-r" data-docid="after"
+                      data-ou="ORIGINAL"><img src="https://thumb.example/after.png"></div>`;},350);
+                  },1300);
+                  </script>'''.replace('ORIGINAL', original), encoding='utf-8')
+                def supply(engine, options, browser, **kwargs):
+                    provider = self.provider(str(fixture))
+                    provider.options = options
+                    provider.logger = kwargs['logger']
+                    provider.stop_event = kwargs['stop_event']
+                    provider.verification_timeout = 3
+                    return provider
+                events = []
+                result = run_collection(['apple'], CollectionOptions(engine='google', headless=False,
+                    keyword_timeout=1, max_scrolls=1, max_candidates=1, limit=1),
+                    output_root=Path(root)/'out', provider_factory=supply, logger=events.append)
+                self.assertEqual((result.status, result.saved_count), ('success', 1))
+                job = next(iter(load_run(result.run_dir)['jobs'].values()))
+                self.assertEqual(job['records'][0]['downloaded_url'], original)
+                self.assertEqual([e['waiting'] for e in events if e['type'] == 'verification'], [True, False])
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(2)
+
+    def test_manual_verification_has_separate_timeout_and_cancellation(self):
+        import time
+        provider = self.provider('provider_blocked.html', headless=False)
+        provider.verification_timeout = .2
+        start = time.monotonic()
+        with self.assertRaisesRegex(NeedsAttention, '대기'):
+            list(provider.search('apple'))
+        self.assertLess(time.monotonic()-start, 1.5)
+        self.assertGreater(provider.remaining(), 1)
+        provider = self.provider('provider_blocked.html', headless=False)
+        provider.stop_event = threading.Event()
+        provider.logger = lambda message: provider.stop_event.set()
+        with self.assertRaises(Cancelled):
+            list(provider.search('apple'))
+
+    def test_consecutive_missing_originals_stop_and_save_diagnostics_in_run(self):
+        import json
+        import tempfile
+        from image_collector.runner import run_collection
+        from image_collector.storage import load_run
+        with tempfile.TemporaryDirectory() as root:
+            supplied = []
+            def supply(engine, options, browser, **kwargs):
+                provider = self.provider('provider_google_missing.html')
+                provider.options = options
+                real_wait = provider.wait
+                provider.wait = lambda condition, timeout=10: real_wait(condition, min(timeout, .1))
+                supplied.append(provider)
+                return provider
+            result = run_collection(['apple', 'pear'], CollectionOptions(engine='google', headless=True,
+                keyword_timeout=10, limit=5), output_root=root, provider_factory=supply)
+            self.assertEqual(result.status, 'needs_attention')
+            self.assertEqual(len(supplied), 1, 'Later Google jobs must not repeat broken extraction')
+            jobs = list(load_run(result.run_dir)['jobs'].values())
+            self.assertEqual(len(jobs[0]['records']), 2)
+            self.assertIn('연속 3', jobs[0]['error'])
+            diagnostics = result.run_dir / jobs[0]['folder'] / 'diagnostics'
+            report = json.loads((diagnostics / 'google-original-missing.json').read_text(encoding='utf-8'))
+            self.assertEqual(report['consecutive_missing_originals'], 3)
+            self.assertEqual(report['rank'], 3)
+            self.assertEqual(report['card_count'], 5)
+            self.assertNotIn('cookies', report)
+            self.assertTrue((diagnostics / 'google-original-missing.png').read_bytes().startswith(b'\x89PNG'))
+
+    def test_successful_original_resets_consecutive_failure_count(self):
+        import time
+        provider = self.provider('provider_google_missing.html')
+        self.driver.get((Path(__file__).parent / 'fixtures/provider_google_missing.html').resolve().as_uri())
+        self.driver.execute_script("document.querySelectorAll('.isv-r')[2].dataset.ou='https://images.example/ok.jpg'")
+        provider.deadline = time.monotonic() + 5
+        real_wait = provider.wait
+        provider.wait = lambda condition, timeout=10: real_wait(condition, min(timeout, .1))
+        results = [provider.candidate(card, index+1) for index, card in enumerate(provider.read_cards())]
+        self.assertEqual(results[2].original_url, 'https://images.example/ok.jpg')
+        self.assertEqual(provider.missing_originals, 2)
 
 
 if __name__ == "__main__":

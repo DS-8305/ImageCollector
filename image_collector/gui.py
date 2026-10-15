@@ -103,19 +103,24 @@ def snapshot_form(values, batch_loader=None, preview=False):
     return FormSnapshot(keywords, options, Path(output))
 
 
-def search_preview(snapshot, stop_event, emit):
+def search_preview(snapshot, stop_event, emit, browser_pool=None):
     """Search at most twenty candidates, then fetch small thumbnails off Tk's thread."""
     from .browser import BrowserSession
     from .providers import create_provider
     from .downloader import Downloader
     from PIL import Image
     resolved = snapshot.options.resolve()
-    browser = BrowserSession(headless=resolved.headless)
+    owns_browser = browser_pool is None
+    browser = (BrowserSession(headless=resolved.headless) if owns_browser
+               else browser_pool.get(headless=resolved.headless))
     provider = None
     downloader = None
     try:
         provider = create_provider(resolved.engine, resolved, browser, stop_event,
                                    lambda message: emit({'type': 'log', 'message': str(message)}))
+        provider.verification_callback = lambda **data: emit({'type': 'verification', **data})
+        from uuid import uuid4
+        provider.diagnostic_dir = snapshot.output_root / 'diagnostics' / ('preview_' + uuid4().hex[:12])
         candidates = []
         for candidate in provider.search(snapshot.keywords[0]):
             if stop_event.is_set():
@@ -151,7 +156,8 @@ def search_preview(snapshot, stop_event, emit):
             if provider:
                 provider.close()
         finally:
-            browser.close()
+            if owns_browser:
+                browser.close()
 
 
 ENGINE = {'네이버': 'naver', '구글': 'google', '네이버 + 구글': 'both'}
@@ -168,6 +174,9 @@ class CollectorGUI:
         self.root = root
         self.events = queue.Queue()
         self.worker = None
+        self.tasks = queue.Queue()
+        from .browser import BrowserPool
+        self.browser_pool = BrowserPool()
         self.stop_event = threading.Event()
         self.busy = False
         self.closing = False
@@ -191,6 +200,7 @@ class CollectorGUI:
         self.min_width_var = tk.StringVar()
         self.min_height_var = tk.StringVar()
         self.min_long_edge_var = tk.StringVar()
+        self.size_hint_var = tk.StringVar()
         self.show_browser_var = tk.BooleanVar(value=False)
         self.period_var = tk.StringVar(value='전체 기간')
         self.rights_var = tk.StringVar(value='필터 없음')
@@ -241,8 +251,10 @@ class CollectorGUI:
         ttk.Label(form, text='구글 사용 권한').grid(row=5, column=5, sticky='w')
         rights = ttk.Combobox(form, textvariable=self.rights_var, values=tuple(RIGHTS), state='readonly', width=23)
         rights.grid(row=5, column=6, columnspan=2, sticky='ew', padx=3)
-        ttk.Label(form, text='크기는 빈칸이면 프리셋 적용 · 엔진 기본값: 네이버 썸네일 / 구글 원본 · 사용 권한은 출처에서 확인하세요.',
+        ttk.Label(form, textvariable=self.size_hint_var,
                   wraplength=1000).grid(row=6, column=0, columnspan=8, sticky='w', pady=(3, 0))
+        ttk.Label(form, text='크기 빈칸: 프리셋 적용 · 긴 변 0: 제한 해제 · 가로·세로·긴 변 조건을 모두 만족해야 저장합니다.',
+                  wraplength=1000).grid(row=7, column=0, columnspan=8, sticky='w', pady=(3, 0))
         for widget in (keyword_radio, keyword_entry, file_radio, file_entry, file_button, output_entry, output_button, show):
             self.form_widgets.append((widget, 'normal'))
         self.form_widgets.extend([(period, 'readonly'), (rights, 'readonly')])
@@ -277,7 +289,27 @@ class CollectorGUI:
         logs.pack(fill='x', pady=(6, 0))
         self.log_text = tk.Text(logs, height=6, wrap='word', state='disabled')
         self.log_text.pack(fill='both', expand=True)
+        for variable in (self.engine_var, self.mode_var, self.profile_var, self.min_width_var,
+                         self.min_height_var, self.min_long_edge_var):
+            variable.trace_add('write', self._update_size_hint)
+        self._update_size_hint()
         self.after_id = root.after(80, self._pump)
+
+    def _update_size_hint(self, *_):
+        try:
+            def size(variable):
+                value = variable.get().strip()
+                return int(value) if value else None
+            options = CollectionOptions(engine=ENGINE.get(self.engine_var.get(), self.engine_var.get()),
+                profile=PROFILE.get(self.profile_var.get(), self.profile_var.get()) or None,
+                download_mode=MODE.get(self.mode_var.get(), self.mode_var.get()) or None,
+                min_width=size(self.min_width_var), min_height=size(self.min_height_var),
+                min_long_edge=size(self.min_long_edge_var))
+            labels = {'naver': '네이버', 'google': '구글'}
+            self.size_hint_var.set('\n'.join(f'적용 기준 ({labels[engine]}): ' +
+                options.resolve(engine).size_requirement_text() for engine in options.engines))
+        except ValueError:
+            self.size_hint_var.set('크기 입력과 검색엔진·저장 방식·프리셋을 확인하세요. 긴 변 0은 제한 해제입니다.')
 
     def _engine_changed(self, *_):
         engine = ENGINE.get(self.engine_var.get(), self.engine_var.get())
@@ -340,7 +372,7 @@ class CollectorGUI:
         snapshot = self._snapshot()
         if snapshot:
             self.start_task(lambda stop, emit: _run_collection(snapshot.keywords, snapshot.options,
-                output_root=snapshot.output_root, logger=emit, stop_event=stop))
+                output_root=snapshot.output_root, logger=emit, stop_event=stop, browser_pool=self.browser_pool))
 
     def preview(self):
         if self.busy or self.closing:
@@ -348,7 +380,7 @@ class CollectorGUI:
         snapshot = self._snapshot(preview=True)
         if snapshot:
             self.preview_snapshot = None
-            self.start_task(lambda stop, emit: search_preview(snapshot, stop, emit))
+            self.start_task(lambda stop, emit: search_preview(snapshot, stop, emit, browser_pool=self.browser_pool))
 
     def download_selected(self, indices):
         if self.busy or self.closing:
@@ -363,6 +395,7 @@ class CollectorGUI:
         self.start_task(lambda stop, emit: _run_collection(snapshot.keywords, options,
             output_root=snapshot.output_root, logger=emit, stop_event=stop,
             selected_candidates=selected,
+            browser_pool=self.browser_pool,
             provider_factory=lambda engine, resolved, browser, stop_event, logger: StaticProvider(selected)))
 
     def resume(self, retry_failed=False):
@@ -382,7 +415,7 @@ class CollectorGUI:
             messagebox.showerror('실행 기록 확인', str(exc), parent=self.root)
             return
         self.start_task(lambda stop, emit: _run_collection(keywords, options, output_root=Path(path).parent,
-            logger=emit, stop_event=stop, resume=path, retry_failed=retry_failed))
+            logger=emit, stop_event=stop, resume=path, retry_failed=retry_failed, browser_pool=self.browser_pool))
 
     def start_task(self, operation):
         if self.busy or self.closing:
@@ -395,18 +428,28 @@ class CollectorGUI:
         self.status_var.set('작업 중…')
         def work():
             try:
-                result = operation(stop_event, event_queue.put)
-                event_queue.put({'type': 'done', 'result': result})
-            except Cancelled as exc:
-                event_queue.put({'type': 'cancelled', 'message': str(exc)})
-            except NeedsAttention as exc:
-                event_queue.put({'type': 'attention', 'message': str(exc)})
-            except Exception as exc:
-                event_queue.put({'type': 'error', 'message': str(exc)})
+                while True:
+                    task = self.tasks.get()
+                    if task is None:
+                        break
+                    action, task_stop = task
+                    try:
+                        result = action(task_stop, event_queue.put)
+                        event_queue.put({'type': 'done', 'result': result})
+                    except Cancelled as exc:
+                        event_queue.put({'type': 'cancelled', 'message': str(exc)})
+                    except NeedsAttention as exc:
+                        event_queue.put({'type': 'attention', 'message': str(exc)})
+                    except Exception as exc:
+                        event_queue.put({'type': 'error', 'message': str(exc)})
+                    finally:
+                        event_queue.put({'type': 'finished'})
             finally:
-                event_queue.put({'type': 'finished'})
-        self.worker = threading.Thread(target=work, name='image-collector-worker', daemon=True)
-        self.worker.start()
+                self.browser_pool.close()
+        if self.worker is None:
+            self.worker = threading.Thread(target=work, name='image-collector-worker', daemon=True)
+            self.worker.start()
+        self.tasks.put((operation, stop_event))
         return True
 
     def _set_busy(self, busy):
@@ -437,6 +480,11 @@ class CollectorGUI:
         kind = event.get('type')
         if kind == 'log':
             self.log(event.get('message', ''))
+        elif kind == 'verification':
+            if event.get('waiting'):
+                self.status_var.set('캡차·동의 확인 대기 · 같은 Chrome 창에서 처리하세요. 수집 시간 계산을 잠시 멈췄습니다.')
+            elif event.get('resolved'):
+                self.status_var.set('브라우저 확인 완료 · 같은 세션에서 수집을 계속합니다.')
         elif kind == 'progress':
             saved, limit = event.get('saved', 0), event.get('limit', 0)
             self.progress['value'] = min(100, 100 * saved / limit) if limit else 0
@@ -465,7 +513,7 @@ class CollectorGUI:
                             'needs_attention': '사용자 확인 필요', 'failed': '수집 실패'}
                 self.status_var.set(f"{statuses.get(result.status, result.status)} · 총 {result.saved_count}개 · {result.run_dir}")
                 if result.status == 'needs_attention':
-                    self.status_var.set('검색엔진 확인 필요 · 동의/차단 화면을 직접 확인하세요. 새 검색 시 브라우저 표시를 켜세요.')
+                    self.status_var.set('사용자 확인 필요 · 진행 로그와 같은 Chrome 창을 확인한 뒤 이어받기를 누르세요.')
             elif isinstance(result, PreviewSnapshot):
                 self.status_var.set(f'검색 미리보기 완료 · 후보 {len(result.candidates)}개. 체크 후 다운로드하세요.')
         elif kind in ('error', 'cancelled'):
@@ -473,7 +521,7 @@ class CollectorGUI:
             self.status_var.set(('중단됨: ' if kind == 'cancelled' else '작업 실패: ') + event.get('message', ''))
         elif kind == 'attention':
             self.log(event.get('message', ''))
-            self.status_var.set('검색엔진 확인 필요 · 브라우저 표시를 켜서 동의/차단 화면을 확인한 뒤 다시 검색하세요.')
+            self.status_var.set('사용자 확인 필요 · 로그와 브라우저를 확인하세요. 숨김 모드였다면 브라우저 표시를 켜세요.')
         elif kind == 'finished':
             self.busy = False
             self._set_busy(False)
@@ -515,6 +563,7 @@ class CollectorGUI:
             return
         self.closing = True
         self.stop_event.set()
+        self.tasks.put(None)
         self.status_var.set('종료 중… 작업과 브라우저를 정리합니다.')
         if self.after_id is not None:
             self.root.after_cancel(self.after_id)

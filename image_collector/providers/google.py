@@ -3,6 +3,8 @@ from urllib.parse import urlparse, parse_qs
 from dataclasses import replace
 from selenium.common.exceptions import WebDriverException
 from .base import BrowserProvider, http_url
+from image_collector.diagnostics import save_google_diagnostics
+from image_collector.models import NeedsAttention
 
 
 def filter_params(options):
@@ -16,6 +18,7 @@ def filter_params(options):
 
 class GoogleProvider(BrowserProvider):
     engine = "google"
+    missing_originals = 0
     cards_script = """
       const cards = [...document.querySelectorAll('div.isv-r,div[data-ri][data-docid],div[jsname="dTDiAc"],div[data-lpage][data-docid]')];
       const seen = new Set(), results = [];
@@ -64,6 +67,21 @@ class GoogleProvider(BrowserProvider):
     def details(self):
         return self.browser.driver.execute_script(self.detail_script) or []
 
+    def _original_found(self, candidate):
+        self.missing_originals = 0
+        return candidate
+
+    def _missing_original(self, result):
+        if self.remaining() <= 0:
+            return result
+        self.missing_originals += 1
+        if self.missing_originals >= 3 and self.options.download_mode == 'original-only':
+            location = save_google_diagnostics(self.browser.driver, self.diagnostic_dir,
+                                               result.rank, self.missing_originals)
+            raise NeedsAttention('구글 원본 주소 추출이 연속 3회 실패해 수집을 멈췄습니다. '
+                                 '저장 결과와 진단 기록을 확인하세요. 진단 기록: ' + location)
+        return result
+
     def candidate(self, card, rank):
         result = super().candidate(card, rank)
         if self.options.download_mode == "thumbnail":
@@ -72,7 +90,7 @@ class GoogleProvider(BrowserProvider):
         original = http_url(card.get("original")) or http_url(query.get("imgurl", [""])[0])
         source = result.source_url or http_url(query.get("imgrefurl", [""])[0])
         if original:
-            return replace(result, original_url=original, source_url=source)
+            return self._original_found(replace(result, original_url=original, source_url=source))
         driver = self.browser.driver
         previous = {row.get("original") for row in self.details()}
         try:
@@ -89,12 +107,12 @@ class GoogleProvider(BrowserProvider):
 
             detail = self.wait(changed, timeout=5)
             if detail:
-                return replace(result, original_url=http_url(detail.get("original")),
+                return self._original_found(replace(result, original_url=http_url(detail.get("original")),
                                source_url=http_url(detail.get("source_url")) or source,
-                               license_url=http_url(detail.get("license_url")))
+                               license_url=http_url(detail.get("license_url"))))
             if self.logger:
                 self.logger(f"Google candidate {rank}: original image was not exposed before the detail deadline.")
         except WebDriverException:
             self.check_cancelled()
             self.page_state()
-        return replace(result, source_url=source)
+        return self._missing_original(replace(result, source_url=source))

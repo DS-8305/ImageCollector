@@ -152,6 +152,27 @@ class TkTests(unittest.TestCase):
         self.assertIn('2/3', self.gui.status_var.get())
         self.assertAlmostEqual(float(self.gui.progress['value']), 200 / 3)
 
+    def test_size_hint_shows_inherited_long_edge_and_updates_for_overrides(self):
+        self.gui.engine_var.set('구글')
+        self.gui.min_width_var.set('100')
+        self.gui.min_height_var.set('100')
+        hint = self.gui.size_hint_var.get()
+        for text in ('가로 100px', '세로 100px', '긴 변 1200px'):
+            self.assertIn(text, hint)
+        self.gui.min_long_edge_var.set('0')
+        self.assertIn('긴 변 제한 없음', self.gui.size_hint_var.get())
+        self.gui.min_width_var.set('invalid')
+        self.assertIn('입력', self.gui.size_hint_var.get())
+        self.gui.min_width_var.set('100')
+        self.gui.min_long_edge_var.set('')
+        self.gui.profile_var.set('직접 지정')
+        self.assertIn('긴 변 제한 없음', self.gui.size_hint_var.get())
+        self.gui.profile_var.set('엔진 기본값')
+        self.gui.engine_var.set('네이버 + 구글')
+        self.assertIn('네이버', self.gui.size_hint_var.get())
+        self.assertIn('구글', self.gui.size_hint_var.get())
+        self.assertIn('긴 변 1200px', self.gui.size_hint_var.get())
+
     def test_worker_uses_captured_values_and_only_queues_events(self):
         started, release = threading.Event(), threading.Event()
         observations = []
@@ -209,7 +230,7 @@ class TkTests(unittest.TestCase):
         self.gui.gallery.set_preview((original,))
         self.gui.keyword_var.set('after')
         self.gui.engine_var.set('네이버')
-        def runner(keywords, options, output_root, logger, stop_event, provider_factory, selected_candidates):
+        def runner(keywords, options, output_root, logger, stop_event, provider_factory, selected_candidates, **kwargs):
             provider = provider_factory('google', options.resolve(), None, stop_event, logger)
             captured.append((keywords, options.engine, tuple(provider.search(keywords[0]))))
             return RunResult(Path(output_root) / 'run', [], 'success')
@@ -260,6 +281,51 @@ class TkTests(unittest.TestCase):
         self.pump_until(lambda: not self.gui.busy)
         self.assertIn('브라우저', self.gui.status_var.get())
         self.assertIn('확인', self.gui.status_var.get())
+
+    def test_separate_searches_share_chrome_and_owner_thread_until_gui_closes(self):
+        import base64
+        from io import BytesIO
+        from urllib.parse import quote
+        from PIL import Image
+        from image_collector import browser, providers
+        observations = []
+        sessions = []
+        main_thread = threading.get_ident()
+        png = BytesIO()
+        Image.new('RGB', (180, 150), 'purple').save(png, 'PNG')
+        thumbnail = 'data:image/png;base64,' + base64.b64encode(png.getvalue()).decode()
+        original_factory = providers.create_provider
+        with tempfile.TemporaryDirectory() as root:
+            self.gui.browser_pool = browser.BrowserPool(profile_root=Path(root))
+            self.gui.output_var.set(str(Path(root) / 'output'))
+            self.gui.engine_var.set('구글')
+            self.gui.show_browser_var.set(False)
+            self.gui.mode_var.set('썸네일')
+            self.gui.limit_var.set('1')
+            def factory(engine, options, session, **kwargs):
+                sessions.append(session)
+                driver = session.driver
+                observations.append((threading.get_ident(), driver.session_id))
+                provider = original_factory(engine, options, session, **kwargs)
+                provider.search_url = lambda keyword: 'data:text/html,' + quote(
+                    f'<title>{keyword}</title><div class="isv-r" data-docid="one"><img alt="{keyword}" src="{thumbnail}"></div>')
+                return provider
+            with patch.object(providers, 'create_provider', factory):
+                for keyword in ('first', 'second'):
+                    self.gui.keyword_var.set(keyword)
+                    self.gui.start()
+                    self.pump_until(lambda: not self.gui.busy, seconds=20)
+                    self.assertIn('수집 완료', self.gui.status_var.get())
+                    self.assertEqual(len(self.gui.gallery.items), 1)
+                    self.assertTrue(self.gui.gallery.items[0].path.is_file())
+                    self.assertEqual(self.gui.gallery.items[0].title, keyword)
+            self.assertEqual(observations[0], observations[1])
+            self.assertNotEqual(observations[0][0], main_thread)
+            self.assertIs(sessions[0], sessions[1])
+            self.assertIsNotNone(sessions[0]._driver)
+            self.gui.close()
+            self.pump_until(lambda: self.gui.destroyed, seconds=10)
+            self.assertIsNone(sessions[0]._driver)
 
 class PreviewWorkerTests(unittest.TestCase):
     def test_search_preview_bounds_candidates_and_emits_small_real_thumbnails(self):

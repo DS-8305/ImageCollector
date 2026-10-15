@@ -3,13 +3,13 @@ from __future__ import annotations
 
 import os
 import threading
-import time
 from dataclasses import asdict, replace
 from pathlib import Path
 
 from .models import (Candidate, CollectionOptions, RunResult, JobResult, CollectionError,
                      Cancelled, NeedsAttention, RejectedImage, DuplicateImage)
 from .storage import RunStore, load_run
+from .budget import ActiveBudget
 
 
 def _status(jobs):
@@ -29,9 +29,11 @@ def _result(store, job):
 
 def run_collection(keywords, options: CollectionOptions, output_root="downloaded_images",
                    logger=None, stop_event=None, resume=None, retry_failed=False,
-                   provider_factory=None, downloader_factory=None, selected_candidates=None) -> RunResult:
-    from .browser import BrowserSession
+                   provider_factory=None, downloader_factory=None, selected_candidates=None,
+                   browser_pool=None) -> RunResult:
+    from .browser import BrowserPool
     from .providers import create_provider
+    from .providers.base import BrowserProvider
     from .downloader import Downloader
 
     keywords = list(dict.fromkeys(k.strip() for k in keywords if k.strip()))
@@ -58,7 +60,8 @@ def run_collection(keywords, options: CollectionOptions, output_root="downloaded
         store = RunStore.create(keywords,options,output_root,selected_candidates=selected_candidates)
     stop = stop_event if stop_event is not None else threading.Event()
     headless = all(item.headless for item in resolved.values())
-    browser = BrowserSession(headless=headless)
+    owns_browser_pool = browser_pool is None
+    browser_pool = browser_pool if browser_pool is not None else BrowserPool()
     supply = provider_factory or create_provider
     download_type = downloader_factory or Downloader
     blocked = {}
@@ -109,7 +112,8 @@ def run_collection(keywords, options: CollectionOptions, output_root="downloaded
             job.update(status="running",error="")
             store.checkpoint()
             emit("log",message=f'{job["engine"]} / {job["keyword"]} 수집 시작')
-            deadline = time.monotonic() + item_options.keyword_timeout
+            emit('log',message='이미지 저장 크기 기준: ' + item_options.size_requirement_text())
+            budget = ActiveBudget(item_options.keyword_timeout)
             provider = download = iterator = None
             seen_ids = {row["candidate_id"] for row in saved}
             seen_hashes = {row["content_hash"] for row in saved}
@@ -122,14 +126,21 @@ def run_collection(keywords, options: CollectionOptions, output_root="downloaded
                             return iter(selected)
                     provider = SelectionProvider()
                 else:
+                    browser = browser_pool.get(headless=headless) if options.backend == 'browser' else None
                     provider = supply(job["engine"],item_options,browser,stop_event=stop,logger=provider_log)
-                download = download_type(item_options,stop_event=stop,deadline=deadline)
+                if isinstance(provider, BrowserProvider):
+                    provider.budget = budget
+                    provider.verification_callback = lambda **data: emit('verification', **data)
+                    provider.diagnostic_dir = store.run_dir / job['folder'] / 'diagnostics'
+                download = download_type(item_options,stop_event=stop,deadline=budget.deadline)
+                if isinstance(download, Downloader):
+                    download.budget = budget
                 iterator = iter(provider.search(job["keyword"]))
                 for candidate in iterator:
                     if stop.is_set():
                         raise Cancelled("사용자가 중단했습니다.")
                     received += 1
-                    if time.monotonic() >= deadline:
+                    if budget.remaining() <= 0:
                         job["error"] = "키워드 작업 제한 시간에 도달했습니다."
                         break
                     if received > item_options.max_candidates:
@@ -203,6 +214,7 @@ def run_collection(keywords, options: CollectionOptions, output_root="downloaded
         return RunResult(store.run_dir,jobs,status)
     finally:
         try:
-            browser.close()
+            if owns_browser_pool:
+                browser_pool.close()
         finally:
             store.close()
